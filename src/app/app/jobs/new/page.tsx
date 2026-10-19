@@ -1,7 +1,7 @@
 import { createJobAction } from "../../_actions/jobs";
 import { Card, Field, PageHeader, buttonClass } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
-import { assertCan } from "@/lib/permissions";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
+
 import { JOB_TEMPLATES, TEMPLATES_BY_TYPE, type AgencyType } from "@/lib/templates";
 
 export const metadata = { title: "New job" };
@@ -9,7 +9,7 @@ export const metadata = { title: "New job" };
 export default async function NewJob({ searchParams }: { searchParams: Promise<{ company?: string }> }) {
   const sp = await searchParams;
   const user = await requireUser();
-  assertCan(user, "manageJobs");
+  requireCap(user, "manageJobs");
   const { companies, users, retainers, type } = await tenant(user, async (tx) => ({
     companies: await tx.q<{ id: string; name: string }>("select id, name from companies where kind = 'client' and status <> 'former' order by name"),
     users: await tx.q<{ id: string; name: string }>("select id, name from users where active order by name"),

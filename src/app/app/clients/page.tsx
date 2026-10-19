@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Card, HealthBadge, LinkButton, Meter, PageHeader, StatusBadge, Table, Td } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { clientHealthScores } from "@/lib/services/pulse";
 
@@ -8,6 +8,7 @@ export const metadata = { title: "Clients" };
 
 export default async function ClientsPage() {
   const user = await requireUser();
+  requireCap(user, "seeAllJobs");
   const { companies, health } = await tenant(user, async (tx) => ({
     companies: await tx.q<{ id: string; name: string; code: string; status: string; am: string | null; live_jobs: number; onboarding_done: number; onboarding_total: number; po_required: boolean }>(
       `select c.id, c.name, c.code, c.status, u.name as am, c.po_required,

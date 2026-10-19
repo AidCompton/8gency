@@ -3,6 +3,7 @@ import { addDays, daysBetween, todayIn } from "../domain/dates";
 import { runCollections } from "./billing";
 import { agencySettings, appUrl, ensureHubToken, notify, queueMessage, usersWithRoles } from "./core";
 import { checkRetainerAlerts } from "./retainers";
+import { firstName } from "../domain/text";
 
 /**
  * The default automation library (M26), built from Part 3's operating rules.
@@ -65,7 +66,7 @@ export async function runAutomations(tx: Tx) {
       toName: w.contact_name,
       to: w.email,
       subject: key,
-      body: `Hi ${w.contact_name.split(" ")[0]}, a gentle reminder that “${w.name}” has been waiting for your review for ${days} days. You can approve or comment here: ${link}`,
+      body: `Hi ${firstName(w.contact_name)}, a gentle reminder that “${w.name}” has been waiting for your review for ${days} days. You can approve or comment here: ${link}`,
       relatedType: "deliverable_chase",
       relatedId: w.id,
     });

@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { adminQuery, withTenant, type Tx } from "./db";
-import type { Role } from "./permissions";
+import { can, type Capability, type Role } from "./permissions";
 
 const COOKIE = "8g_session";
 const SESSION_DAYS = 30;
@@ -84,4 +84,9 @@ export async function requireUser(): Promise<SessionUser> {
 /** Run a tenant-scoped transaction as the signed-in user. */
 export async function tenant<T>(user: SessionUser, fn: (tx: Tx) => Promise<T>): Promise<T> {
   return withTenant({ agencyId: user.agency_id, userId: user.id, actorLabel: user.name }, fn);
+}
+
+/** For pages: send users without a capability back to My Day with a message, rather than an error page. */
+export function requireCap(user: SessionUser, cap: Capability) {
+  if (!can(user, cap)) redirect(`/app/my-day?error=${encodeURIComponent("You don't have access to that page. Ask an owner or operations lead if you need it.")}`);
 }

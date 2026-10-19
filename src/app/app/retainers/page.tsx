@@ -1,15 +1,15 @@
 import Link from "next/link";
 import { Card, Empty, LinkButton, Meter, Money, PageHeader, Pct } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatShort } from "@/lib/domain/dates";
-import { assertCan, can } from "@/lib/permissions";
+import { can } from "@/lib/permissions";
 import { listRetainers } from "@/lib/services/retainers";
 
 export const metadata = { title: "Retainers" };
 
 export default async function RetainersPage() {
   const user = await requireUser();
-  assertCan(user, "seeBudgetBurn");
+  requireCap(user, "seeBudgetBurn");
   const rs = await tenant(user, (tx) => listRetainers(tx));
   const money = can(user, "seeMargins");
   return (

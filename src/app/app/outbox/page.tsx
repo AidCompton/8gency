@@ -1,12 +1,12 @@
 import { Badge, Card, PageHeader } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
-import { assertCan } from "@/lib/permissions";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
+
 
 export const metadata = { title: "Outbox" };
 
 export default async function OutboxPage() {
   const user = await requireUser();
-  assertCan(user, "settings");
+  requireCap(user, "settings");
   const rows = await tenant(user, (tx) =>
     tx.q<{ id: string; channel: string; to_name: string; to_address: string; subject: string; body: string; status: string; created_at: Date }>(
       "select id, channel, to_name, to_address, subject, body, status, created_at from outbox_messages order by created_at desc limit 100",

@@ -75,7 +75,14 @@ export async function profitability(tx: Tx, w: Window) {
     if (!clients.has(id)) clients.set(id, { company_id: id, name, revenue: 0, labour: 0, direct: 0, hours: 0, agi: 0 });
     return clients.get(id)!;
   };
-  for (const j of jobRows) {
+  // Internal and pitch jobs are new-business and overhead cost, not client cost (NB-03).
+  const internal = { hours: 0, labour: 0 };
+  for (const j of jobRows.filter((x) => x.billing_model === "internal")) {
+    internal.hours += j.hours_win;
+    internal.labour += j.labour;
+  }
+  const clientJobs = jobRows.filter((j) => j.billing_model !== "internal");
+  for (const j of clientJobs) {
     const c = touch(j.company_id, j.company_name);
     c.revenue += j.revenue;
     c.labour += j.labour;
@@ -100,7 +107,7 @@ export async function profitability(tx: Tx, w: Window) {
 
   // Service lines by job type.
   const services = new Map<string, { job_type: string; revenue: number; labour: number; hours: number }>();
-  for (const j of jobRows) {
+  for (const j of clientJobs) {
     const s = services.get(j.job_type) ?? { job_type: j.job_type, revenue: 0, labour: 0, hours: 0 };
     s.revenue += j.revenue;
     s.labour += j.labour;
@@ -113,7 +120,8 @@ export async function profitability(tx: Tx, w: Window) {
     { revenue: 0, labour: 0, direct: 0, agi: 0, hours: 0 },
   );
   return {
-    jobs: jobRows.map((j) => ({ ...j, margin: projectMargin(j.revenue, j.labour, j.direct) })).sort((a, b) => (a.margin ?? 1) - (b.margin ?? 1)),
+    internal,
+    jobs: clientJobs.map((j) => ({ ...j, margin: projectMargin(j.revenue, j.labour, j.direct) })).sort((a, b) => (a.margin ?? 1) - (b.margin ?? 1)),
     clients: clientRows,
     services: [...services.values()].map((s) => ({ ...s, margin: projectMargin(s.revenue, s.labour, 0) })),
     totals: { ...totals, profit: totals.revenue - totals.labour - totals.direct, margin: projectMargin(totals.revenue, totals.labour, totals.direct) },

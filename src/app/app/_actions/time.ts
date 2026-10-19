@@ -1,5 +1,5 @@
 "use server";
-import { act, num, opt, str } from "@/lib/actions";
+import { act, num, opt, str, withParam } from "@/lib/actions";
 import { requireUser, tenant } from "@/lib/auth";
 import { assertCan } from "@/lib/permissions";
 import { deleteTimeEntry, logTime, lockTimeUntil, startTimer, stopTimer, timesheetSuggestions, type TimeCategory } from "@/lib/services/time";
@@ -13,7 +13,13 @@ export async function startTimerAction(fd: FormData) {
 
 export async function stopTimerAction(fd: FormData) {
   const user = await requireUser();
-  await act(back(fd, "/app/time"), () => tenant(user, async (tx) => void (await stopTimer(tx, user.id))), "Timer stopped and time logged.");
+  const target = back(fd, "/app/time");
+  await act(target, () =>
+    tenant(user, async (tx) => {
+      const entry = await stopTimer(tx, user.id);
+      return withParam(target, "ok", entry ? "Timer stopped and time logged." : "Timer stopped. Under 3 minutes, so nothing was logged.");
+    }),
+  );
 }
 
 export async function logTimeAction(fd: FormData) {

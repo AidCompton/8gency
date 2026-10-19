@@ -4,6 +4,7 @@ import { requireUser, tenant } from "@/lib/auth";
 import { assertCan } from "@/lib/permissions";
 import { addContact, createCompany, revokeContactAccess } from "@/lib/services/agency";
 import { appUrl, ensureHubToken, queueMessage, UserError } from "@/lib/services/core";
+import { firstName } from "@/lib/domain/text";
 
 export async function createClientAction(fd: FormData) {
   const user = await requireUser();
@@ -63,7 +64,7 @@ export async function sendHubLinkAction(fd: FormData) {
       const c = await tx.one<{ id: string; name: string; email: string; phone: string }>("select id, name, email, phone from contacts where id = $1 and active", [str(fd, "contact_id")]);
       if (!c) throw new UserError("Contact not found.");
       const link = appUrl(`/hub/${await ensureHubToken(tx, c.id)}`);
-      await queueMessage(tx, { channel: "email", toName: c.name, to: c.email, subject: `Your ${user.agency_name} client hub`, body: `Hi ${c.name.split(" ")[0]},\n\nEverything we're working on for you, what needs your approval and your invoices are here. No login needed:\n${link}\n\n${user.name}` });
+      await queueMessage(tx, { channel: "email", toName: c.name, to: c.email, subject: `Your ${user.agency_name} client hub`, body: `Hi ${firstName(c.name)},\n\nEverything we're working on for you, what needs your approval and your invoices are here. No login needed:\n${link}\n\n${user.name}` });
       await queueMessage(tx, { channel: "whatsapp", toName: c.name, to: c.phone, body: `${user.agency_name}: your client hub (no login needed) ${link}` });
     }),
   "Hub link sent.");

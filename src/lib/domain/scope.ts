@@ -2,6 +2,8 @@
 // (SC-01, SC-07). They are deliberately transparent: each flag lists the phrase
 // that triggered it, so the account manager can see why (8gent rule 3).
 
+import { firstName } from "./text";
+
 const OOS_SIGNALS: { pattern: RegExp; label: string; weight: number }[] = [
   { pattern: /\bcan (you|we) (also|just)\b/i, label: "“can you also…”", weight: 35 },
   { pattern: /\bcould (you|we) (also|just)\b/i, label: "“could you also…”", weight: 35 },
@@ -86,7 +88,7 @@ export function changeRequestMessage(opts: {
   agencyName: string;
   senderName: string;
 }): string {
-  const first = opts.contactName.split(" ")[0] || "there";
+  const first = firstName(opts.contactName) || "there";
   return [
     `Hi ${first},`,
     ``,

@@ -1,17 +1,17 @@
 import Link from "next/link";
 import { dismissRequestAction, triageChangeAction, triageTaskAction } from "../_actions/scope";
 import { BarList, Badge, Card, Empty, Money, PageHeader, StatusBadge, Table, Tabs, Td, buttonClass } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { ageSince } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
-import { assertCan, can } from "@/lib/permissions";
+import { can } from "@/lib/permissions";
 
 export const metadata = { title: "Scope Guard" };
 
 export default async function ScopePage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const tab = (await searchParams).tab ?? "triage";
   const user = await requireUser();
-  assertCan(user, "triage");
+  requireCap(user, "triage");
   const money = can(user, "seeMargins");
   const data = await tenant(user, async (tx) => ({
     requests: await tx.q<{ id: string; body: string; channel: string; oos_score: number; oos_signals: string[]; created_at: Date; company_id: string; company_name: string; contact: string | null; job_id: string | null }>(

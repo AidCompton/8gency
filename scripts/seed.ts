@@ -8,7 +8,7 @@ import { closePools, withAdminTx, withTenant, type Tx } from "../src/lib/db";
 import { addDays, isWeekday, startOfMonth, addMonths, todayIn } from "../src/lib/domain/dates";
 import { addContact, createAgencyWithOwner, createCompany } from "../src/lib/services/agency";
 import { createInvoice, readyToBill, recordPayment, sendInvoice } from "../src/lib/services/billing";
-import { createJob, lockScope, setJobStatus, addTask } from "../src/lib/services/jobs";
+import { addTask, closeJob, createJob, lockScope, setJobStatus } from "../src/lib/services/jobs";
 import { createRetainer, reconcilePeriod } from "../src/lib/services/retainers";
 import { createDeliverable, uploadVersion, sendToClient, clientDecision, internalDecision } from "../src/lib/services/review";
 import { absorbChangeRequest, createChangeRequest, sendChangeRequest, submitClientRequest } from "../src/lib/services/scope";
@@ -147,6 +147,26 @@ async function main() {
     }),
   );
 
+  const mmmRetainerId = await withTenant(ctx("Pieter van Wyk", people.pieter), (tx) =>
+    createRetainer(tx, {
+      company_id: c.mmm,
+      name: "Always-on performance content",
+      fee_cents: 205_000_00,
+      hours_per_period: 195,
+      start_date: retainerStart,
+      rollover: "none",
+      rollover_cap_hours: 0,
+      billing_timing: "arrears",
+      price_increase_pct: 6,
+      job_template_key: "social_month",
+      job_owner_id: people.tom,
+      scope: [
+        { name: "Ad creative variants", unit: "deliverable", quantity: 40, rounds: 1 },
+        { name: "Optimisation and reporting", unit: "hours", quantity: 60, rounds: 0 },
+      ],
+    }),
+  );
+
   // ── Project jobs ──
   const jobs = await withTenant(ctx("Jess Naidoo", people.jess), async (tx) => {
     const koc = await createJob(tx, {
@@ -166,6 +186,14 @@ async function main() {
       start_date: addDays(today, 2), assignee_id: people.mia,
     });
     const pitch = await createJob(tx, { company_id: c.mmm, name: "Internal: new-business pitch prep", template_key: "blank", billing_model: "internal", owner_id: ownerId });
+    const brochure = await createJob(tx, {
+      company_id: c.koc, name: "Karoo Outdoor winter brochure", template_key: "design", fee_cents: 48_000_00, budget_hours: 160, owner_id: people.jess, account_manager_id: people.sipho,
+      start_date: addDays(today, -88), due_date: addDays(today, -48), assignee_id: people.mia,
+    });
+    const guidelines = await createJob(tx, {
+      company_id: c.vela, name: "Vela brand guidelines", template_key: "design", fee_cents: 96_000_00, budget_hours: 260, owner_id: people.jess, account_manager_id: people.sipho,
+      start_date: addDays(today, -88), due_date: addDays(today, 8), assignee_id: people.kabelo,
+    });
     await tx.q("update jobs set status = 'in_progress' where id = $1", [pitch]);
 
     await fillBrief(tx, koc, c.kocApprover, {
@@ -185,7 +213,9 @@ async function main() {
     });
     await tx.q("update briefs set objective = 'New packaging', audience = '' where job_id = $1", [ff]);
 
-    for (const id of [koc, vela, mmm]) {
+    await fillBrief(tx, brochure, c.kocApprover, { objective: "Drive winter bookings from walk-in visitors at partner lodges", audience: "Lodge guests, 35-60", key_message: "Winter is the Karoo's best season", deliverables: "16-page A5 brochure", must_haves: "Price list, map, booking QR code", budget: "R48 000", success_measure: "QR scans and bookings" });
+    await fillBrief(tx, guidelines, c.velaApprover, { objective: "Give Vela's in-house team and suppliers one consistent brand system", audience: "Vela marketing team and suppliers", key_message: "Warm, professional, clinical-grade", deliverables: "Brand guidelines PDF, templates", must_haves: "Accessibility colour contrast", budget: "R96 000", success_measure: "Supplier work approved first time" });
+    for (const id of [koc, vela, mmm, brochure, guidelines]) {
       await lockScope(tx, id);
       await setJobStatus(tx, id, "in_progress");
     }
@@ -199,14 +229,15 @@ async function main() {
     await assign(mmm, [people.tom, people.tom, people.mia, people.tom, people.tom]);
     // Out-of-scope work that crept in.
     await addTask(tx, { job_id: koc, title: "Extra landing page for the Sutherland stargazing package", assignee_id: people.zanele, out_of_scope: true, estimate_hours: 10, due_date: addDays(today, 6) });
-    return { koc, vela, mmm, ff, pitch };
+    return { koc, vela, mmm, ff, pitch, brochure, guidelines };
   });
 
   // Mark early tasks done so progress is realistic.
   await withTenant(ctx("Jess Naidoo", people.jess), async (tx) => {
     await tx.q("update tasks set status = 'done', completed_at = now() where job_id = any($1) and due_date < $2", [[jobs.koc, jobs.vela, jobs.mmm], today]);
     await tx.q("update tasks set status = 'done' where job_id in (select id from jobs where retainer_id = $1 and due_date < $2)", [retainerId, today]);
-    await tx.q("update jobs set scope_locked_at = now(), status = case when due_date < $2 then 'complete' else 'in_progress' end where retainer_id = $1", [retainerId, today]);
+    await tx.q("update jobs set scope_locked_at = now(), status = case when due_date < $2 then 'complete' else 'in_progress' end where retainer_id = any($1)", [[retainerId, mmmRetainerId], today]);
+    await tx.q("update tasks set status = 'done' where job_id in (select id from jobs where retainer_id = $1 and due_date < $2)", [mmmRetainerId, today]);
     await tx.q("update tasks set status = 'blocked', blocked_reason = 'Waiting on product photography from client' where job_id = $1 and title like 'Front-end%'", [jobs.koc]);
   });
 
@@ -216,11 +247,21 @@ async function main() {
   );
   const tasksFor = (jobId: string) => withTenant(ctx("seed"), (tx) => tx.q<{ id: string; title: string; assignee_id: string | null; out_of_scope: boolean }>("select id, title, assignee_id, out_of_scope from tasks where job_id = $1", [jobId]));
   const jobTasks: Record<string, { id: string; title: string; assignee_id: string | null; out_of_scope: boolean }[]> = {};
-  for (const id of [jobs.koc, jobs.vela, jobs.mmm, jobs.pitch, ...retainerJobs.map((j) => j.id)]) jobTasks[id] = await tasksFor(id);
+  for (const id of [jobs.koc, jobs.vela, jobs.mmm, jobs.pitch, jobs.brochure, jobs.guidelines, ...retainerJobs.map((j) => j.id)]) jobTasks[id] = await tasksFor(id);
 
   type Plan = { user: string; job: (d: string) => string | null; hours: () => number; category?: "billable" | "internal" | "new_business" | "admin" };
   const retainerJobOn = (d: string) => retainerJobs.find((j) => j.start_date <= d && j.due_date >= d)?.id ?? null;
+  const mmmRetainerJobs = await withTenant(ctx("seed"), (tx) =>
+    tx.q<{ id: string; start_date: string; due_date: string }>("select id, start_date, due_date from jobs where retainer_id = $1 order by start_date", [mmmRetainerId]),
+  );
+  for (const j of mmmRetainerJobs) jobTasks[j.id] = await tasksFor(j.id);
+  const mmmJobOn = (d: string) => (rand() < 0.85 ? mmmRetainerJobs.find((j) => j.start_date <= d && j.due_date >= d)?.id ?? null : null);
   const plans: Plan[] = [
+    { user: people.tom, job: mmmJobOn, hours: () => 1.5 + rand() },
+    { user: people.mia, job: mmmJobOn, hours: () => 1.5 + rand() },
+    { user: people.ruan, job: mmmJobOn, hours: () => 1.5 + rand() },
+    { user: people.kabelo, job: mmmJobOn, hours: () => 1 + rand() },
+    { user: people.zanele, job: mmmJobOn, hours: () => 1 + rand() },
     // Retainer runs ~30% over its 40h: Tom, Mia and Ruan all chip in.
     { user: people.tom, job: retainerJobOn, hours: () => 1.5 + rand() * 1.5 },
     { user: people.mia, job: (d) => (rand() < 0.35 ? retainerJobOn(d) : null), hours: () => 1 + rand() },
@@ -236,7 +277,13 @@ async function main() {
     { user: people.sipho, job: (d) => pickOne([jobs.koc, jobs.vela, retainerJobOn(d)]), hours: () => 0.5 + rand() * 1.5 },
     { user: people.sipho, job: () => (rand() < 0.3 ? jobs.pitch : null), hours: () => 1 + rand() * 2, category: "new_business" },
     { user: ownerId, job: () => (rand() < 0.4 ? jobs.pitch : null), hours: () => 1 + rand() * 2, category: "new_business" },
-    { user: people.pieter, job: () => (rand() < 0.5 ? jobs.mmm : jobs.pitch), hours: () => 1 + rand() * 2 },
+    { user: people.pieter, job: (d) => (d >= addDays(today, -40) && rand() < 0.5 ? jobs.mmm : rand() < 0.4 ? jobs.pitch : null), hours: () => 1 + rand() * 2 },
+    { user: ownerId, job: (d) => (rand() < 0.5 ? pickOne([d >= addDays(today, -70) ? jobs.koc : null, d >= addDays(today, -45) ? jobs.vela : null]) : null), hours: () => 0.5 + rand() },
+    { user: people.ruan, job: (d) => (d >= addDays(today, -86) && d < addDays(today, -50) ? jobs.brochure : null), hours: () => 2.5 + rand() * 1.5 },
+    { user: people.mia, job: (d) => (d >= addDays(today, -86) && d < addDays(today, -50) ? jobs.brochure : null), hours: () => 2.5 + rand() * 1.5 },
+    { user: people.kabelo, job: (d) => (d >= addDays(today, -88) && d < addDays(today, -46) ? jobs.guidelines : null), hours: () => 3 + rand() * 2 },
+    { user: people.ruan, job: (d) => (d >= addDays(today, -40) && rand() < 0.5 ? jobs.guidelines : null), hours: () => 1.5 + rand() },
+    { user: people.mia, job: (d) => (d >= addDays(today, -40) && rand() < 0.5 ? jobs.guidelines : null), hours: () => 1.5 + rand() },
   ];
   let entries = 0;
   for (let d = start90; d < today; d = addDays(d, 1)) {
@@ -266,6 +313,13 @@ async function main() {
     await logTime(tx, people.zanele, { job_id: jobs.koc, task_id: oosTask.id, work_date: addDays(today, -3), hours: 4, oos_resolution: "change_request", notes: "Layout and build" });
   });
   console.log(`logged ${entries} time entries`);
+
+  await withTenant(ctx("Jess Naidoo", people.jess), async (tx) => {
+    await tx.q("update tasks set status = 'done', completed_at = now() where job_id = $1", [jobs.brochure]);
+    await setJobStatus(tx, jobs.brochure, "complete");
+    await closeJob(tx, jobs.brochure, { on_time: true, on_budget: false, rating: 4, lessons: "Print specs changed mid-job; lock printer specs at kick-off." });
+    await tx.q("update jobs set completed_at = now() - interval '45 days', closed_at = now() - interval '40 days' where id = $1", [jobs.brochure]);
+  });
 
   // ── Review and approval ──
   await withTenant(ctx("Kabelo Mahlangu", people.kabelo), async (tx) => {
@@ -319,6 +373,8 @@ async function main() {
     if (periods[0]) await reconcilePeriod(tx, periods[0].id, "absorbed", "First month: building the relationship");
     if (periods[1]) await reconcilePeriod(tx, periods[1].id, "absorbed", "Heritage Day push");
     // periods[2] (last month) is left for the team to reconcile in the demo.
+    const mmmPeriods = await tx.q<{ id: string; ends_on: string }>("select id, ends_on from retainer_periods where retainer_id = $1 and ends_on < $2 order by starts_on", [mmmRetainerId, today]);
+    for (const p of mmmPeriods) await reconcilePeriod(tx, p.id, "absorbed", "Within agreed flex");
 
     const bill = async (companyId: string, filter: (k: string, d: string) => boolean, po: string, issued: string, paid: boolean) => {
       const items = (await readyToBill(tx, companyId)).filter((i) => filter(i.key, i.description));
@@ -337,7 +393,10 @@ async function main() {
     await bill(c.bcb, (k) => k === periodKeys[1], "BCB-PO-7790", addMonths(retainerStart, 1), true);
     await bill(c.bcb, (k) => k === periodKeys[2], "BCB-PO-7802", addMonths(retainerStart, 2), false);
     await bill(c.vela, (_k, d) => d.includes("Deposit"), "", addDays(today, -44), true);
+    const mmmKeys = (await tx.q<{ id: string; ends_on: string }>("select id, ends_on from retainer_periods where retainer_id = $1 and ends_on < $2 order by starts_on", [mmmRetainerId, today]));
+    for (const p of mmmKeys) await bill(c.mmm, (k) => k === `retainer_period:${p.id}`, "", addDays(p.ends_on, 2), true);
     await bill(c.koc, (_k, d) => d.includes("Deposit"), "", addDays(today, -52), false);
+    await bill(c.koc, (_k, d) => d.includes("winter brochure"), "", addDays(today, -44), true);
     // The KOC "designs approved" milestone and BCB's current month stay in ready-to-bill, and MMM's T&M time stays unbilled.
   });
 

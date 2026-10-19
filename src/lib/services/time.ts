@@ -238,7 +238,10 @@ export async function timesheetSuggestions(tx: Tx, userId: string, date: string)
   return candidates
     .map((c) => {
       const m = meta.find((x) => x.job_id === c.job_id && (x.task_id ?? null) === (c.task_id ?? null)) ?? meta.find((x) => x.job_id === c.job_id)!;
-      const hours = Math.max(0.25, Math.round(((remaining * c.n) / totalWeight) * 4) / 4);
+      // Split the unlogged part of the day by activity, but never suggest more
+      // than the evidence supports (about half an hour per recorded action).
+      const share = (remaining * c.n) / totalWeight;
+      const hours = Math.max(0.25, Math.round(Math.min(share, c.n * 0.5) * 4) / 4);
       return {
         job_id: c.job_id,
         task_id: c.task_id,

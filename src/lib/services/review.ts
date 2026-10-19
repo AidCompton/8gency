@@ -5,6 +5,7 @@ import type { Tx } from "../db";
 import { nextRoundNeedsChangeRequest } from "../domain/scope";
 import { agencySettings, appUrl, createActionCode, ensureHubToken, notify, queueMessage, recordActivity, UserError } from "./core";
 import { createChangeRequest } from "./scope";
+import { firstName } from "../domain/text";
 
 export const UPLOAD_ROOT = resolve(process.env.UPLOAD_DIR ?? "./uploads");
 const MAX_UPLOAD = 50 * 1024 * 1024;
@@ -154,6 +155,8 @@ export async function sendToClient(tx: Tx, deliverableId: string, opts: { absorb
   const allowed = roundsAllowance(d);
   if (nextRoundNeedsChangeRequest(d.rounds_used, allowed)) {
     if (opts.requestChange) {
+      const open = await tx.one<{ id: string }>("select id from change_requests where deliverable_id = $1 and status in ('draft','sent')", [d.id]);
+      if (open) throw new UserError("A change request for the extra round is already open. Get it approved (or absorb it), then send this version.");
       const crId = await createChangeRequest(tx, {
         company_id: d.company_id,
         job_id: d.job_id,
@@ -204,7 +207,7 @@ export async function sendToClient(tx: Tx, deliverableId: string, opts: { absorb
     toName: approver.name,
     to: approver.email,
     subject: `For your approval: ${d.name} (v${v.number})`,
-    body: `Hi ${approver.name.split(" ")[0]},\n\n${d.name} for ${d.job_name} is ready for your review (version ${v.number}, round ${d.rounds_used + 1} of ${Math.max(allowed, d.rounds_used + 1)}).\n\nView and comment: ${link}\n\nOr reply to this email: APPROVE ${code}, or CHANGES ${code} followed by your feedback.\n\n${agency.name}`,
+    body: `Hi ${firstName(approver.name)},\n\n${d.name} for ${d.job_name} is ready for your review (version ${v.number}, round ${d.rounds_used + 1} of ${Math.max(allowed, d.rounds_used + 1)}).\n\nView and comment: ${link}\n\nOr reply to this email: APPROVE ${code}, or CHANGES ${code} followed by your feedback.\n\n${agency.name}`,
     relatedType: "deliverable",
     relatedId: deliverableId,
   });

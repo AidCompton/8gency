@@ -1,15 +1,15 @@
 import { createRetainerAction } from "../../_actions/retainers";
 import { Card, Field, PageHeader, buttonClass } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { startOfMonth, todayIn } from "@/lib/domain/dates";
-import { assertCan } from "@/lib/permissions";
+
 import { JOB_TEMPLATES } from "@/lib/templates";
 
 export const metadata = { title: "New retainer" };
 
 export default async function NewRetainer() {
   const user = await requireUser();
-  assertCan(user, "manageJobs");
+  requireCap(user, "manageJobs");
   const { companies, users } = await tenant(user, async (tx) => ({
     companies: await tx.q<{ id: string; name: string }>("select id, name from companies where kind = 'client' and status <> 'former' order by name"),
     users: await tx.q<{ id: string; name: string }>("select id, name from users where active order by name"),

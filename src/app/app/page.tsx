@@ -10,6 +10,7 @@ import { wipRisks } from "@/lib/services/eightgent";
 import { clientHealthScores, healthScan, ownerSummary } from "@/lib/services/pulse";
 import { listRetainers } from "@/lib/services/retainers";
 import { reviewsWaiting } from "@/lib/services/review";
+import { firstName } from "@/lib/domain/text";
 
 export const metadata = { title: "Home" };
 
@@ -43,7 +44,7 @@ export default async function Home() {
   const monthName = new Date(`${s.month.from}T00:00:00Z`).toLocaleDateString("en-ZA", { month: "long", timeZone: "UTC" });
   return (
     <>
-      <PageHeader title={`Good day, ${user.name.split(" ")[0]}`} subtitle={`${user.agency_name} · ${monthName} to date`} actions={<LinkButton href="/app/pulse">Open Pulse</LinkButton>} />
+      <PageHeader title={`Good day, ${firstName(user.name)}`} subtitle={`${user.agency_name} · ${monthName} to date`} actions={<LinkButton href="/app/pulse">Open Pulse</LinkButton>} />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Profit this month" value={<Money cents={s.profit} compact />} hint={<>Forecast <Money cents={s.forecastProfit} compact /> · margin <Pct n={s.margin} /></>} tone={s.margin !== null && s.margin < 0.15 ? "warning" : undefined} href="/app/pulse" />

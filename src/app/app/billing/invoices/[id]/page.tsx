@@ -2,9 +2,9 @@ import { notFound } from "next/navigation";
 import { addLineAction, recordPaymentAction, sendInvoiceAction, updateDraftAction, voidInvoiceAction, writeOffAction } from "../../../_actions/billing";
 import { PrintButton } from "@/components/PrintButton";
 import { Badge, Card, Field, Money, PageHeader, StatusBadge, buttonClass } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatDate } from "@/lib/domain/dates";
-import { assertCan } from "@/lib/permissions";
+
 import { WRITE_OFF_REASONS } from "@/lib/services/billing";
 
 export const metadata = { title: "Invoice" };
@@ -12,7 +12,7 @@ export const metadata = { title: "Invoice" };
 export default async function InvoicePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await requireUser();
-  assertCan(user, "billing");
+  requireCap(user, "billing");
   const data = await tenant(user, async (tx) => {
     const inv = await tx.one<{
       id: string; number: string | null; status: string; issue_date: string | null; due_date: string | null; currency: string; exchange_rate: number; po_number: string;

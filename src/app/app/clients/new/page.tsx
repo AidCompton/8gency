@@ -1,13 +1,13 @@
 import { createClientAction } from "../../_actions/clients";
 import { Card, Field, PageHeader, buttonClass } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
-import { assertCan } from "@/lib/permissions";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
+
 
 export const metadata = { title: "New client" };
 
 export default async function NewClient() {
   const user = await requireUser();
-  assertCan(user, "manageJobs");
+  requireCap(user, "manageJobs");
   const users = await tenant(user, (tx) => tx.q<{ id: string; name: string }>("select id, name from users where active and role in ('owner','ops','account','pm') order by name"));
   return (
     <>

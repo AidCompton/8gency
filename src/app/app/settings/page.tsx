@@ -1,8 +1,8 @@
 import { addRateAction, addUserAction, deactivateUserAction, importAction, runAutomationsAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
 import { Badge, Card, Field, Money, PageHeader, Table, Tabs, Td, buttonClass } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatDate } from "@/lib/domain/dates";
-import { assertCan, can, ROLE_LABELS } from "@/lib/permissions";
+import { can, ROLE_LABELS } from "@/lib/permissions";
 
 export const metadata = { title: "Settings" };
 
@@ -10,7 +10,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const sp = await searchParams;
   const tab = sp.tab ?? "agency";
   const user = await requireUser();
-  assertCan(user, "settings");
+  requireCap(user, "settings");
   const costs = can(user, "seeCostRates");
   const data = await tenant(user, async (tx) => ({
     agency: (await tx.one<{ name: string; brand_color: string; job_number_format: string; brief_threshold: number; bill_within_days: number; timezone: string; ai_enabled: boolean; agency_type: string }>("select * from agencies where id = $1", [tx.agencyId]))!,

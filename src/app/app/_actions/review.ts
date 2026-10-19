@@ -1,5 +1,5 @@
 "use server";
-import { act, num, opt, str } from "@/lib/actions";
+import { act, num, opt, str, withParam } from "@/lib/actions";
 import { requireUser, tenant } from "@/lib/auth";
 import { assertCan } from "@/lib/permissions";
 import { addFeedback, clientDecision, createDeliverable, internalDecision, sendForInternalReview, sendToClient, uploadVersion } from "@/lib/services/review";
@@ -46,15 +46,16 @@ export async function internalDecisionAction(fd: FormData) {
 export async function sendToClientAction(fd: FormData) {
   const user = await requireUser();
   const id = str(fd, "deliverable_id");
-  await act(`/app/deliverables/${id}`, () =>
+  const back = `/app/deliverables/${id}`;
+  await act(back, () =>
     tenant(user, async (tx) => {
       const r = await sendToClient(tx, id, { absorbReason: str(fd, "absorb_reason"), requestChange: str(fd, "rounds_choice") === "change_request" });
       if (r.needsChangeRequest) {
         throw new UserError(`All ${r.needsChangeRequest.allowed} review round(s) in scope are used. Raise a change request for the extra round, or absorb it with a reason.`);
       }
-      if (!r.sent) return `/app/deliverables/${id}?ok=${encodeURIComponent("Rounds used up: a change request for the extra round is drafted in Scope Guard.")}`;
+      return withParam(back, "ok", r.sent ? "Sent to the client by hub link, email and WhatsApp." : "Rounds used up: a change request for the extra round is drafted in Scope Guard. Send it, then send this version.");
     }),
-  "Sent to the client by hub link, email and WhatsApp.");
+  );
 }
 
 export async function recordClientDecisionAction(fd: FormData) {

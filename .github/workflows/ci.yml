@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_SUPERUSER_URL: postgres://postgres:postgres@localhost:5432/postgres
+      DATABASE_URL: postgres://eightgency_app:eightgency_app@localhost:5432/eightgency
+      DATABASE_ADMIN_URL: postgres://eightgency_admin:eightgency_admin@localhost:5432/eightgency
+      APP_URL: http://localhost:3000
+      UPLOAD_DIR: ./uploads
+      INBOUND_WEBHOOK_SECRET: ci-secret-value
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run db:setup
+      - run: npm run db:migrate
+      # Unit tests, plus tenant-isolation and operating-rule tests against Postgres.
+      - run: npm test
+      # The seed drives every service end to end on realistic data.
+      - run: npm run db:seed
+      - run: npm run build

@@ -31,8 +31,8 @@ export async function createAgencyWithOwner(
   );
   const owner = (
     await client.query<{ id: string }>(
-      `insert into users (agency_id, email, name, password_hash, role, title, cost_rate_cents)
-       values ($1,$2,$3,$4,'owner','Creative Director',$5) returning id`,
+      `insert into users (agency_id, email, name, password_hash, role, title, cost_rate_cents, target_utilisation)
+       values ($1,$2,$3,$4,'owner','Creative Director',$5,0.3) returning id`,
       [agency.id, input.email.toLowerCase(), input.ownerName, input.passwordHash, 720_00],
     )
   ).rows[0];

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { addContactAction, addContractAction, revokeContactAction, sendHubLinkAction, sendStatusReportAction, toggleOnboardingAction, updateClientAction } from "../../_actions/clients";
 import { Badge, Card, Empty, Field, HealthBadge, LinkButton, Meter, Money, PageHeader, SourceNote, StatusBadge, Table, Tabs, Td, buttonClass } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatDate } from "@/lib/domain/dates";
 import { can } from "@/lib/permissions";
 import { onboardingProgress } from "@/lib/services/agency";
@@ -17,6 +17,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
   const { id } = await params;
   const tab = (await searchParams).tab ?? "overview";
   const user = await requireUser();
+  requireCap(user, "seeAllJobs");
   const money = can(user, "seeMargins");
   const data = await tenant(user, async (tx) => {
     const c = await tx.one<{ id: string; name: string; code: string; status: string; po_required: boolean; payment_terms_days: number; billing_email: string; account_manager_id: string | null; satisfaction: number | null; currency: string; created_at: Date }>(

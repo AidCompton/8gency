@@ -107,7 +107,7 @@ export function BarList({ rows, format, max }: { rows: { label: ReactNode; value
   return (
     <ul className="space-y-2.5">
       {rows.map((r, i) => (
-        <li key={i} className="grid grid-cols-[minmax(0,10rem)_1fr_auto] items-center gap-3 text-sm max-sm:grid-cols-[minmax(0,7rem)_1fr_auto]" title={`${typeof r.label === "string" ? r.label : ""} ${format(r.value)}`}>
+        <li key={i} className="grid grid-cols-[minmax(0,13rem)_1fr_auto] items-center gap-3 text-sm max-sm:grid-cols-[minmax(0,7rem)_1fr_auto]" title={`${typeof r.label === "string" ? r.label : ""} ${format(r.value)}`}>
           <span className="truncate text-ink-2">{r.href ? <Link className="hover:text-ink hover:underline" href={r.href}>{r.label}</Link> : r.label}</span>
           <span className="h-2 rounded-full bg-track">
             <span className={cx("block h-full rounded-full", r.value < 0 || r.negative ? "bg-critical" : "bg-seq")} style={{ width: `${Math.min(100, (Math.abs(r.value) / top) * 100)}%` }} />

@@ -2,6 +2,7 @@ import type { Tx } from "../db";
 import { addDays, daysBetween, formatShort, todayIn } from "../domain/dates";
 import { formatMoney, invoiceTotals, lineAmount } from "../domain/money";
 import { agencySettings, appUrl, ensureHubToken, notify, queueMessage, UserError } from "./core";
+import { firstName } from "../domain/text";
 
 export interface BillableItem {
   key: string; // `${source_type}:${source_id}`
@@ -235,7 +236,7 @@ export async function sendInvoice(tx: Tx, invoiceId: string) {
       toName: r.name,
       to: r.email,
       subject: `Tax invoice ${number} from ${settings.name}`,
-      body: `Hello ${r.name.split(" ")[0]},\n\nPlease find tax invoice ${number} for ${formatMoney(inv.total_cents, inv.currency)}, due ${formatShort(due)}.${
+      body: `Hello ${firstName(r.name)},\n\nPlease find tax invoice ${number} for ${formatMoney(inv.total_cents, inv.currency)}, due ${formatShort(due)}.${
         inv.po_number ? `\nYour PO: ${inv.po_number}` : ""
       }\n\n${link ? `View, download and pay: ${link}\n\n` : ""}Use ${number} as the payment reference for EFT.\n\nThank you,\n${settings.name}`,
       relatedType: "invoice",
@@ -352,7 +353,7 @@ export async function runCollections(tx: Tx) {
         toName: c.name,
         to: c.email,
         subject: step < 0 ? `Upcoming: invoice ${inv.number}` : `Reminder: invoice ${inv.number} is overdue`,
-        body: `Hello ${c.name.split(" ")[0]},\n\n${tone}\n\nView and pay: ${link}\n\nThank you,\n${settings.name}`,
+        body: `Hello ${firstName(c.name)},\n\n${tone}\n\nView and pay: ${link}\n\nThank you,\n${settings.name}`,
         relatedType: "invoice",
         relatedId: inv.id,
       });

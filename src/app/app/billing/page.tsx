@@ -2,10 +2,10 @@ import Link from "next/link";
 import { createInvoiceAction } from "../_actions/billing";
 import { lockTimeAction } from "../_actions/time";
 import { Badge, BarList, Card, Empty, Field, Money, PageHeader, StatusBadge, Table, Tabs, Td, buttonClass } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { addDays, endOfMonth, formatShort, startOfMonth, todayIn } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
-import { assertCan } from "@/lib/permissions";
+
 import { debtors, listInvoices, readyToBill, wipValuation } from "@/lib/services/billing";
 import { agencySettings } from "@/lib/services/core";
 import { timesheetCompliance } from "@/lib/services/time";
@@ -15,7 +15,7 @@ export const metadata = { title: "Billing" };
 export default async function BillingPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const tab = (await searchParams).tab ?? "ready";
   const user = await requireUser();
-  assertCan(user, "billing");
+  requireCap(user, "billing");
   const today = todayIn(user.timezone);
   const lastMonthEnd = addDays(startOfMonth(today), -1);
   const data = await tenant(user, async (tx) => ({

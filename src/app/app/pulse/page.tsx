@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { BarList, Card, HealthBadge, Meter, Money, PageHeader, Pct, SourceNote, Stat, Table, Td } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatShort } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
-import { assertCan, can } from "@/lib/permissions";
+import { can } from "@/lib/permissions";
 import { draftWipSummary } from "@/lib/services/eightgent";
 import { clientHealthScores, healthScan, lastNDays, profitability, utilisationByPerson } from "@/lib/services/pulse";
 
@@ -13,7 +13,7 @@ const compact = (v: number) => formatMoney(v, "ZAR", { compact: true });
 
 export default async function PulsePage({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
   const user = await requireUser();
-  assertCan(user, "seeMargins");
+  requireCap(user, "seeMargins");
   const days = [30, 90, 180].includes(Number((await searchParams).days)) ? Number((await searchParams).days) : 90;
   const costs = can(user, "seeCostRates");
   const w = lastNDays(days, user.timezone);
@@ -55,10 +55,11 @@ export default async function PulsePage({ searchParams }: { searchParams: Promis
         </details>
       </Card>
 
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Revenue" value={<Money cents={prof.totals.revenue} compact />} hint={`AGI ${compact(prof.totals.agi)}`} />
         <Stat label="Gross profit" value={<Money cents={prof.totals.profit} compact />} hint="Revenue − labour at cost − direct costs" />
         <Stat label="Margin" value={<Pct n={prof.totals.margin} />} tone={(prof.totals.margin ?? 0) < 0.25 ? "warning" : "good"} hint="Before overheads" />
+        <Stat label="Pitch and internal time" value={<>{Math.round(prof.internal.hours)}h</>} hint={costs ? <>Cost <Money cents={prof.internal.labour} compact /> · not charged to clients</> : "Not charged to clients"} />
         <Stat label="Effective hourly rate" value={<Money cents={prof.totals.hours ? Math.round(prof.totals.agi / prof.totals.hours) : 0} compact />} hint={`${Math.round(prof.totals.hours)}h worked`} />
       </div>
 
@@ -88,19 +89,19 @@ export default async function PulsePage({ searchParams }: { searchParams: Promis
           <p className="p-3 text-xs text-ink-3">Retainer revenue is counted at client level (prorated period fees), so retainer jobs show hours and cost here but revenue on the client.</p>
         </Card>
         <Card title="Utilisation by person" id="people" className="lg:col-span-2" pad={false}>
-          <Table head={["Person", "Role", "Billable / available", "Utilisation vs target", "Realisation", "Unused capacity"]}>
+          <Table head={["Person", "Role", "Billable / available", "Utilisation vs target", "Billable value", "Unused capacity"]}>
             {data.people.filter((p) => p.target_utilisation > 0).map((p) => (
               <tr key={p.id}>
                 <Td>{p.name}</Td>
                 <Td className="text-ink-2">{p.title}</Td>
                 <Td right>{Math.round(p.billable)}h / {Math.round(p.available)}h</Td>
                 <Td className="w-56"><Meter value={p.utilisation ?? 0} max={p.target_utilisation} compact warnAt={10} label={`target ${Math.round(p.target_utilisation * 100)}%`} sublabel={`${Math.round((p.utilisation ?? 0) * 100)}%`} /></Td>
-                <Td right><Pct n={p.value ? p.billed / p.value : null} /></Td>
+                <Td right><Money cents={Math.round(p.value)} compact /></Td>
                 <Td right>{p.gapHours ? `${Math.round(p.gapHours)}h · ${compact(p.gapValue)}` : "—"}</Td>
               </tr>
             ))}
           </Table>
-          <p className="p-3 text-xs text-ink-3">Billable utilisation = billable hours ÷ available hours (contracted, Mon–Fri). Targets are set per person for fairness (TT-03). Realisation here = billed ÷ standard value of billable time.</p>
+          <p className="p-3 text-xs text-ink-3">Billable utilisation = billable hours ÷ available hours (contracted, Mon–Fri). Targets are set per person for fairness (TT-03). Billable value = billable hours at the rate in force on each day.</p>
         </Card>
         <Card title="Service lines">
           <BarList rows={prof.services.sort((a, b) => b.revenue - a.revenue).map((s) => ({ label: s.job_type, value: s.revenue, note: s.margin === null ? "" : `${Math.round(s.margin * 100)}%` }))} format={compact} />

@@ -1,6 +1,6 @@
 import { Card, PageHeader, Table, Td } from "@/components/ui";
-import { requireUser, tenant } from "@/lib/auth";
-import { assertCan, can } from "@/lib/permissions";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 
 export const metadata = { title: "Audit log" };
 
@@ -9,7 +9,7 @@ const MONEY_KEYS = /cost|rate_cents|margin|salary/i;
 export default async function AuditPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const q = (await searchParams).q ?? "";
   const user = await requireUser();
-  assertCan(user, "audit");
+  requireCap(user, "audit");
   const rows = await tenant(user, (tx) =>
     tx.q<{ id: number; actor_label: string; action: string; record_type: string; record_id: string | null; before: unknown; after: unknown; created_at: Date }>(
       `select id, actor_label, action, record_type, record_id, before, after, created_at from audit_events
