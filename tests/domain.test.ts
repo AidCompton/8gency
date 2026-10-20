@@ -115,3 +115,12 @@ test("email and WhatsApp replies are parsed into decisions", () => {
   assert.match(changes.body, /logo bigger/);
   assert.equal(parseReply("👍").decision, "approved");
 });
+
+test("summarise makes short titles from client messages", async () => {
+  const { summarise } = await import("../src/lib/domain/text");
+  assert.equal(
+    summarise("Hey team, quick one: can you also do a version of this week's posts in isiZulu? Need it by tomorrow if possible 🙏"),
+    "Hey team, quick one: can you also do a version of this…",
+  );
+  assert.equal(summarise("Swap the hero photo."), "Swap the hero photo.");
+});

@@ -4,6 +4,7 @@ import { BarList, Badge, Card, Empty, Money, PageHeader, StatusBadge, Table, Tab
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { ageSince } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
+import { summarise } from "@/lib/domain/text";
 import { can } from "@/lib/permissions";
 
 export const metadata = { title: "Scope Guard" };
@@ -67,7 +68,7 @@ export default async function ScopePage({ searchParams }: { searchParams: Promis
                   <form action={triageTaskAction} className="space-y-2 rounded-lg bg-surface-2 p-3">
                     <div className="text-xs font-semibold uppercase tracking-wide text-ink-3">In scope → task</div>
                     <input type="hidden" name="request_id" value={r.id} />
-                    <input name="title" placeholder="Task title" defaultValue={r.body.slice(0, 70)} />
+                    <input name="title" placeholder="Task title" defaultValue={summarise(r.body)} />
                     <select name="job_scope" required defaultValue="">
                       <option value="" disabled>Job and scope item…</option>
                       {options.map((o) => <option key={o.scope_id} value={`${o.job_id}:${o.scope_id}`}>{o.number} · {o.scope_name}</option>)}
@@ -81,7 +82,7 @@ export default async function ScopePage({ searchParams }: { searchParams: Promis
                   <form action={triageChangeAction} className="space-y-2 rounded-lg bg-surface-2 p-3">
                     <div className="text-xs font-semibold uppercase tracking-wide text-ink-3">Out of scope → change request</div>
                     <input type="hidden" name="request_id" value={r.id} />
-                    <input name="title" placeholder="Change request title" defaultValue={r.body.slice(0, 70)} />
+                    <input name="title" placeholder="Change request title" defaultValue={summarise(r.body)} />
                     <select name="job_id" defaultValue={r.job_id ?? ""}><option value="">No specific job</option>{jobs.map((o) => <option key={o.job_id} value={o.job_id}>{o.number}</option>)}</select>
                     <input name="estimate_hours" placeholder="Estimated hours" inputMode="decimal" />
                     <div className="flex gap-2">

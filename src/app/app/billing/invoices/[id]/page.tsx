@@ -59,10 +59,10 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
             {inv.po_number && <div>PO number: <b>{inv.po_number}</b></div>}
           </section>
           <table className="mt-6 w-full text-sm">
-            <thead><tr className="border-b border-[#ddd] text-left text-xs uppercase text-[#777]"><th className="py-2">Description</th><th className="py-2 text-right">Qty</th><th className="py-2 text-right">Unit</th><th className="py-2 text-right">Amount</th></tr></thead>
+            <thead><tr className="border-b border-[#ddd] text-left text-xs uppercase text-[#777]"><th className="py-2">Description</th><th className="py-2 pl-4 text-right">Qty</th><th className="py-2 pl-4 text-right">Unit</th><th className="py-2 pl-4 text-right">Amount</th></tr></thead>
             <tbody>
               {lines.map((l) => (
-                <tr key={l.id} className="border-b border-[#eee]"><td className="py-2 pr-2">{l.description}</td><td className="py-2 text-right tnum">{l.quantity}</td><td className="py-2 text-right"><Money cents={l.unit_cents} currency={inv.currency} /></td><td className="py-2 text-right"><Money cents={l.amount_cents} currency={inv.currency} /></td></tr>
+                <tr key={l.id} className="border-b border-[#eee]"><td className="py-2 pr-2">{l.description}</td><td className="py-2 pl-4 text-right tnum">{l.quantity}</td><td className="whitespace-nowrap py-2 pl-4 text-right"><Money cents={l.unit_cents} currency={inv.currency} /></td><td className="whitespace-nowrap py-2 pl-4 text-right"><Money cents={l.amount_cents} currency={inv.currency} /></td></tr>
               ))}
             </tbody>
           </table>

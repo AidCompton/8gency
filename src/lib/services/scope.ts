@@ -2,6 +2,7 @@ import type { Tx } from "../db";
 import { todayIn } from "../domain/dates";
 import { formatMoney } from "../domain/money";
 import { changeRequestMessage, detectOutOfScope, scopeMeter } from "../domain/scope";
+import { summarise } from "../domain/text";
 import {
   agencySettings,
   appUrl,
@@ -257,7 +258,7 @@ export async function triageAsTask(tx: Tx, requestId: string, input: { job_id: s
   const task = await tx.one<{ id: string }>(
     `insert into tasks (agency_id, job_id, scope_item_id, title, notes, assignee_id, due_date)
      values ($1,$2,$3,$4,$5,$6,$7) returning id`,
-    [tx.agencyId, input.job_id, input.scope_item_id, input.title || req.body.slice(0, 80), req.body, input.assignee_id || null, input.due_date || null],
+    [tx.agencyId, input.job_id, input.scope_item_id, input.title || summarise(req.body), req.body, input.assignee_id || null, input.due_date || null],
   );
   await tx.q("update client_requests set status = 'accepted', task_id = $2, job_id = $3, triaged_by = $4, triaged_at = now() where id = $1", [
     requestId,
@@ -282,7 +283,7 @@ export async function triageAsChangeRequest(tx: Tx, requestId: string, input: { 
     company_id: req.company_id,
     job_id: jobId,
     retainer_id: retainer?.retainer_id ?? null,
-    title: input.title || req.body.slice(0, 80),
+    title: input.title || summarise(req.body),
     description: req.body,
     origin: "request",
     estimate_hours: input.estimate_hours,
