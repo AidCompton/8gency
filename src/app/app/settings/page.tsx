@@ -1,4 +1,5 @@
 import { CheckCircle } from "@phosphor-icons/react/ssr";
+import { LogoCard } from "@/components/LogoCard";
 import { SubmitButton } from "@/components/SubmitButton";
 import { addRateAction, addUserAction, deactivateUserAction, importAction, runAutomationsAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
 import { Badge, Card, Field, Money, PageHeader, Table, Tabs, Td, buttonClass } from "@/components/ui";
@@ -39,10 +40,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <Tabs base="/app/settings" active={tab} tabs={[{ key: "agency", label: "Agency" }, { key: "entity", label: "Billing entity & tax" }, { key: "rates", label: "Rate card" }, { key: "team", label: "Team" }, { key: "import", label: "Import" }, { key: "automations", label: "Automations" }, { key: "data", label: "Data & security" }]} />
 
       {tab === "agency" && (
-        <Card className="max-w-2xl">
+        <div className="grid max-w-5xl items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <Card title="Agency">
           <form action={updateAgencyAction} className="grid gap-4 sm:grid-cols-2">
             <Field label="Agency name" className="sm:col-span-2"><input name="name" defaultValue={data.agency.name} /></Field>
-            <Field label="Brand colour" hint="Used on the client hub and invoices."><input name="brand_color" defaultValue={data.agency.brand_color} /></Field>
+            <Field label="Brand colour" hint="Accents on the client hub and invoices."><input type="color" name="brand_color" defaultValue={data.agency.brand_color} className="!p-1" /></Field>
             <Field label="Time zone"><input name="timezone" defaultValue={data.agency.timezone} /></Field>
             <Field label="Job number format" hint="{CLIENT}, {YYYY}, {YY}, {SEQ}"><input name="job_number_format" defaultValue={data.agency.job_number_format} /></Field>
             <Field label="Minimum brief score to start work"><input name="brief_threshold" defaultValue={data.agency.brief_threshold} /></Field>
@@ -51,6 +53,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <div><SubmitButton className={buttonClass("primary", "sm")}>Save</SubmitButton></div>
           </form>
         </Card>
+        <LogoCard logoV={user.agency_logo_v} agencyName={user.agency_name} back="/app/settings?tab=agency" />
+        </div>
       )}
 
       {tab === "entity" && (

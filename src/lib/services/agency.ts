@@ -152,3 +152,29 @@ export async function revokeContactAccess(tx: Tx, contactId: string) {
   await tx.q("update action_tokens set used_at = coalesce(used_at, now()) where contact_id = $1", [contactId]);
   await tx.audit("contact.access_revoked", "contact", contactId);
 }
+
+const LOGO_MAX_BYTES = 512 * 1024;
+
+/** Identify a logo by its bytes, not the browser's claimed type. */
+export function sniffLogo(b: Buffer): string | null {
+  if (b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  if (/^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE[^>]*>\s*)?<svg[\s>]/i.test(b.subarray(0, 2048).toString("utf8"))) return "image/svg+xml";
+  return null;
+}
+
+/** Agency logo for the sidebar, client hub and invoices. `null` removes it. */
+export async function setAgencyLogo(tx: Tx, bytes: Buffer | null) {
+  if (bytes) {
+    if (!bytes.length) throw new UserError("Choose an image file.");
+    if (bytes.length > LOGO_MAX_BYTES) throw new UserError("Logos must be 512 KB or smaller. Export a smaller PNG or an SVG.");
+    const mime = sniffLogo(bytes);
+    if (!mime) throw new UserError("Use a PNG, JPEG, WebP or SVG image.");
+    await tx.q("update agencies set logo = $2, logo_mime = $3, logo_updated_at = now() where id = $1", [tx.agencyId, bytes, mime]);
+    await tx.audit("settings.logo", "agency", tx.agencyId, undefined, { mime, bytes: bytes.length });
+  } else {
+    await tx.q("update agencies set logo = null, logo_mime = '', logo_updated_at = now() where id = $1", [tx.agencyId]);
+    await tx.audit("settings.logo", "agency", tx.agencyId, undefined, { removed: true });
+  }
+}

@@ -81,6 +81,31 @@
   --elev-md: 0 4px 16px rgb(0 0 0 / 0.5);
 }
 
+/* Invoice sheet: always the light palette, whatever the app theme (it previews the printed page). */
+.paper {
+  color-scheme: light;
+  --bg: #f7f7f9;
+  --surface: #ffffff;
+  --surface-2: #f2f2f5;
+  --border: #e4e4e9;
+  --control-border: #8a8a96;
+  --text: #0f0f14;
+  --text-2: #4b4b57;
+  --text-3: #686875;
+  --brand: #5b3df5;
+  --brand-ink: #ffffff;
+  --good-ink: #006300;
+  --warning-ink: #8a5a00;
+  --critical-ink: #a32626;
+  --seq-ink: #1f64b8;
+  --focus: #5b3df5;
+  --elev-xs: 0 1px 2px rgb(16 16 24 / 0.05);
+}
+/* Agency logos are usually drawn for light backgrounds: give them a white chip (invisible on light surfaces). */
+.logo-chip { background: #fff; border-radius: 6px; padding: 3px 6px; }
+/* Inline-edit fields (invoice editor): look like text until hovered or focused. */
+.input-inline:not(:hover, :focus-visible) { border-color: transparent; background: transparent; box-shadow: none; }
+
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);
@@ -169,7 +194,9 @@ button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
   *, ::before, ::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
 
+@page { size: A4; margin: 14mm; }
 @media print {
   .no-print { display: none !important; }
   body, html { background: white; color: black; }
+  .paper { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
 }

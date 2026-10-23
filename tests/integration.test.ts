@@ -6,8 +6,8 @@ import { randomUUID } from "node:crypto";
 import { after, before, describe, test } from "node:test";
 import { adminQuery, closePools, withAdminTx, withTenant, type Tx } from "../src/lib/db";
 import { addDays, todayIn } from "../src/lib/domain/dates";
-import { addContact, createAgencyWithOwner, createCompany } from "../src/lib/services/agency";
-import { createInvoice, readyToBill, sendInvoice, updateDraft } from "../src/lib/services/billing";
+import { addContact, createAgencyWithOwner, createCompany, setAgencyLogo } from "../src/lib/services/agency";
+import { createInvoice, readyToBill, saveDraftInvoice, sendInvoice, type DraftInvoiceEdit } from "../src/lib/services/billing";
 import { processInbound } from "../src/lib/services/inbound";
 import { addTask, createJob, lockScope, setJobStatus } from "../src/lib/services/jobs";
 import { createRetainer, reconcilePeriod } from "../src/lib/services/retainers";
@@ -160,12 +160,64 @@ describe("operating rules", () => {
       assert.ok(items.length > 0, "starting the job should make the deposit billable");
       const inv = await createInvoice(tx, companyId, items.map((i) => i.key));
       await assert.rejects(sendInvoice(tx, inv), /requires a PO number/);
-      await updateDraft(tx, inv, { po_number: "PO-123", notes: "", exchange_rate: 1 });
+      const lines = await tx.q<{ id: string; description: string; quantity: number; unit_cents: number }>("select id, description, quantity, unit_cents from invoice_lines where invoice_id = $1 order by sort", [inv]);
+      await saveDraftInvoice(tx, inv, { lines, po_number: "PO-123", notes: "", due_date: null, tax_rate: 0.15, exchange_rate: 1 });
       const number = await sendInvoice(tx, inv);
       assert.match(number, /^INV-\d{5}$/);
       const t = await tx.one<{ subtotal_cents: number; tax_cents: number; total_cents: number }>("select subtotal_cents, tax_cents, total_cents from invoices where id = $1", [inv]);
       assert.equal(t!.tax_cents, Math.round(t!.subtotal_cents * 0.15));
       void jobId;
+    });
+  });
+
+  test("draft invoices are fully editable; removed lines go back to ready-to-bill; issued invoices are locked", async () => {
+    await asA(async (tx) => {
+      const companyId = await createCompany(tx, { name: `Edit ${run}` });
+      await readyJob(tx, companyId, { fee: 20_000_00, template: "campaign" });
+      const items = await readyToBill(tx, companyId);
+      const inv = await createInvoice(tx, companyId, items.map((i) => i.key));
+      const [first] = await tx.q<{ id: string; description: string; quantity: number; unit_cents: number; source_type: string }>(
+        "select id, description, quantity, unit_cents, source_type from invoice_lines where invoice_id = $1 order by sort",
+        [inv],
+      );
+      assert.equal(first.source_type, "milestone");
+      assert.equal((await readyToBill(tx, companyId)).length, 0, "billed items leave the queue");
+
+      const edit = (lines: DraftInvoiceEdit["lines"], extra: Partial<DraftInvoiceEdit> = {}): DraftInvoiceEdit => ({ lines, po_number: "", notes: "", due_date: null, tax_rate: 0.15, exchange_rate: 1, ...extra });
+      // Remove the milestone line, add two manual lines (one blank row is ignored), zero-rate the tax, set a due date.
+      const due = addDays(todayIn(), 10);
+      await saveDraftInvoice(tx, inv, edit([{ description: "Strategy workshop", quantity: 2, unit_cents: 1500_00 }, { description: "Travel", quantity: 1, unit_cents: 450_50 }, { description: "", quantity: 1, unit_cents: 0 }], { tax_rate: 0, due_date: due }));
+      const t = await tx.one<{ subtotal_cents: number; tax_cents: number; total_cents: number; due_date: string }>("select subtotal_cents, tax_cents, total_cents, due_date::text from invoices where id = $1", [inv]);
+      assert.deepEqual({ ...t }, { subtotal_cents: 3450_50, tax_cents: 0, total_cents: 3450_50, due_date: due });
+      assert.equal(await tx.one<{ n: number }>("select count(*)::int as n from invoice_lines where invoice_id = $1", [inv]).then((r) => r!.n), 2);
+      assert.ok((await readyToBill(tx, companyId)).some((i) => i.key === items[0].key), "the removed milestone is billable again");
+
+      // Edit an existing line in place.
+      const kept = await tx.q<{ id: string; description: string; quantity: number; unit_cents: number }>("select id, description, quantity, unit_cents from invoice_lines where invoice_id = $1 order by sort", [inv]);
+      await saveDraftInvoice(tx, inv, edit([{ ...kept[0], quantity: 3 }, kept[1]], { tax_rate: 0, due_date: due }));
+      assert.equal((await tx.one<{ total_cents: number }>("select total_cents from invoices where id = $1", [inv]))!.total_cents, 4950_50);
+
+      await assert.rejects(saveDraftInvoice(tx, inv, edit([])), /at least one line/);
+      await assert.rejects(saveDraftInvoice(tx, inv, edit([{ ...kept[0], description: " " }])), /needs a description/);
+      await assert.rejects(saveDraftInvoice(tx, inv, edit([{ ...kept[0], quantity: 0 }])), /Quantity must be more than zero/);
+
+      await sendInvoice(tx, inv);
+      assert.equal((await tx.one<{ due_date: string }>("select due_date::text from invoices where id = $1", [inv]))!.due_date, due, "a due date set on the draft is kept");
+      await assert.rejects(saveDraftInvoice(tx, inv, edit(kept)), /Only draft invoices/);
+    });
+  });
+
+  test("agency logos are checked by their bytes and size", async () => {
+    await asA(async (tx) => {
+      const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+      await setAgencyLogo(tx, png);
+      assert.equal((await tx.one<{ logo_mime: string }>("select logo_mime from agencies where id = $1", [tx.agencyId]))!.logo_mime, "image/png");
+      await setAgencyLogo(tx, Buffer.from('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>'));
+      assert.equal((await tx.one<{ logo_mime: string }>("select logo_mime from agencies where id = $1", [tx.agencyId]))!.logo_mime, "image/svg+xml");
+      await assert.rejects(setAgencyLogo(tx, Buffer.from("MZ not an image")), /PNG, JPEG, WebP or SVG/);
+      await assert.rejects(setAgencyLogo(tx, Buffer.concat([png, Buffer.alloc(600 * 1024)])), /512 KB/);
+      await setAgencyLogo(tx, null);
+      assert.equal((await tx.one<{ logo: Buffer | null }>("select logo from agencies where id = $1", [tx.agencyId]))!.logo, null);
     });
   });
 

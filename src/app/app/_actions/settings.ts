@@ -2,8 +2,8 @@
 import { act, num, opt, str } from "@/lib/actions";
 import { hashPassword, requireUser, tenant } from "@/lib/auth";
 import { toCents } from "@/lib/domain/money";
-import { assertCan, type Role } from "@/lib/permissions";
-import { addTeamMember, deactivateUser } from "@/lib/services/agency";
+import { assertCan, can, type Role } from "@/lib/permissions";
+import { addTeamMember, deactivateUser, setAgencyLogo } from "@/lib/services/agency";
 import { runAutomations } from "@/lib/services/automations";
 import { UserError } from "@/lib/services/core";
 import { importClients, importTasks, importTime, parseCsv } from "@/lib/services/importer";
@@ -136,4 +136,33 @@ export async function markNotificationsReadAction(fd: FormData) {
       else await tx.q("update notifications set read_at = now() where user_id = $1 and read_at is null", [user.id]);
     }),
   );
+}
+
+/** Only same-app paths, so a crafted form can't redirect elsewhere. */
+const backTo = (fd: FormData) => (/^\/app(\/|\?|$)/.test(str(fd, "back")) ? str(fd, "back") : "/app/settings?tab=agency");
+
+// Settings or billing users: the logo is set from Settings and from the invoice editor.
+async function logoUser() {
+  const user = await requireUser();
+  if (!can(user, "billing")) assertCan(user, "settings");
+  return user;
+}
+
+export async function uploadLogoAction(fd: FormData) {
+  const user = await logoUser();
+  const file = fd.get("logo");
+  await act(
+    backTo(fd),
+    () =>
+      tenant(user, async (tx) => {
+        if (!(file instanceof File) || !file.size) throw new UserError("Choose an image file.");
+        await setAgencyLogo(tx, Buffer.from(await file.arrayBuffer()));
+      }),
+    "Logo updated.",
+  );
+}
+
+export async function removeLogoAction(fd: FormData) {
+  const user = await logoUser();
+  await act(backTo(fd), () => tenant(user, (tx) => setAgencyLogo(tx, null)), "Logo removed.");
 }

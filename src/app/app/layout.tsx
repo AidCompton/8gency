@@ -45,12 +45,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           items={nav}
           brand={
             <Link href="/app" className="flex min-w-0 items-center gap-2.5 rounded-lg">
-              <>
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-sm font-bold text-white shadow-sm" style={{ background: user.agency_color }} aria-hidden>
-                  {user.agency_name.charAt(0).toUpperCase()}
-                </span>
-                <span className="truncate font-semibold tracking-tight">{user.agency_name}</span>
-              </>
+              {user.agency_logo_v ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={`/api/logo?v=${user.agency_logo_v}`} alt={user.agency_name} className="logo-chip max-h-9 max-w-[176px] object-contain object-left" />
+              ) : (
+                <>
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-sm font-bold text-white shadow-sm" style={{ background: user.agency_color }} aria-hidden>
+                    {user.agency_name.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="truncate font-semibold tracking-tight">{user.agency_name}</span>
+                </>
+              )}
             </Link>
           }
           account={

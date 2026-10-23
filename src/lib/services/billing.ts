@@ -154,25 +154,95 @@ export async function recalcInvoice(tx: Tx, invoiceId: string) {
   await tx.q("update invoices set subtotal_cents = $2, tax_cents = $3, total_cents = $4 where id = $1", [invoiceId, t.subtotal_cents, t.tax_cents, t.total_cents]);
 }
 
-export async function addManualLine(tx: Tx, invoiceId: string, line: { description: string; quantity: number; unit_cents: number; job_id?: string | null }) {
-  await assertDraft(tx, invoiceId);
-  if (!line.description.trim()) throw new UserError("Describe the line.");
-  await tx.q(
-    `insert into invoice_lines (agency_id, invoice_id, job_id, description, quantity, unit_cents, amount_cents, source_type, sort)
-     values ($1,$2,$3,$4,$5,$6,$7,'manual',999)`,
-    [tx.agencyId, invoiceId, line.job_id ?? null, line.description.trim(), line.quantity, line.unit_cents, lineAmount(line)],
-  );
-  await recalcInvoice(tx, invoiceId);
-}
-
 async function assertDraft(tx: Tx, invoiceId: string) {
   const inv = await tx.one<{ status: string }>("select status from invoices where id = $1", [invoiceId]);
-  if (inv?.status !== "draft") throw new UserError("Only draft invoices can be changed. Issue a credit note for sent invoices.");
+  if (!inv) throw new UserError("Invoice not found.");
+  if (inv.status !== "draft") throw new UserError("Only draft invoices can be changed. Issue a credit note for sent invoices.");
 }
 
-export async function updateDraft(tx: Tx, invoiceId: string, f: { po_number: string; notes: string; exchange_rate: number }) {
+/** Put a line's source (milestone, time, cost) back in the ready-to-bill queue. */
+async function releaseLine(tx: Tx, l: { id: string; source_type: string; source_id: string | null }) {
+  if (l.source_type === "milestone") await tx.q("update milestones set status = 'complete' where id = $1", [l.source_id]);
+  if (l.source_type === "time") await tx.q("update time_entries set invoice_line_id = null where invoice_line_id = $1", [l.id]);
+  if (l.source_type === "cost") await tx.q("update costs set invoice_line_id = null where invoice_line_id = $1", [l.id]);
+}
+
+export interface DraftLine {
+  /** Existing line id; omit for a new manual line. */
+  id?: string;
+  description: string;
+  quantity: number;
+  unit_cents: number;
+}
+
+export interface DraftInvoiceEdit {
+  lines: DraftLine[];
+  po_number: string;
+  notes: string;
+  /** Blank = the client's payment terms from the issue date. */
+  due_date: string | null;
+  /** 0.15 = 15%. */
+  tax_rate: number;
+  exchange_rate: number;
+}
+
+/**
+ * Save the whole draft in one go: header fields plus every line. Kept lines
+ * are updated in the order given, new ones are added as manual lines, and
+ * removed lines are deleted with their sources released back to the
+ * ready-to-bill queue. Sent invoices never change (credit notes instead).
+ */
+export async function saveDraftInvoice(tx: Tx, invoiceId: string, f: DraftInvoiceEdit) {
   await assertDraft(tx, invoiceId);
-  await tx.q("update invoices set po_number = $2, notes = $3, exchange_rate = $4 where id = $1", [invoiceId, f.po_number.trim(), f.notes, f.exchange_rate || 1]);
+  const lines = f.lines.filter((l) => l.id || l.description.trim() || l.unit_cents);
+  if (!lines.length) throw new UserError("An invoice needs at least one line. Delete the draft instead.");
+  for (const l of lines) {
+    if (!l.description.trim()) throw new UserError("Every line needs a description.");
+    if (!Number.isFinite(l.quantity) || l.quantity <= 0) throw new UserError(`Quantity must be more than zero on “${l.description.trim()}”.`);
+    if (!Number.isFinite(l.unit_cents)) throw new UserError(`Enter a unit price on “${l.description.trim()}”.`);
+  }
+  if (!Number.isFinite(f.tax_rate) || f.tax_rate < 0 || f.tax_rate > 1) throw new UserError("Tax rate must be between 0% and 100%.");
+  if (f.due_date && !/^\d{4}-\d{2}-\d{2}$/.test(f.due_date)) throw new UserError("Enter the due date as a date.");
+
+  const before = await tx.one<{ total_cents: number; po_number: string; due_date: string | null; tax_rate: number }>("select total_cents, po_number, due_date, tax_rate from invoices where id = $1", [invoiceId]);
+  const existing = await tx.q<{ id: string; source_type: string; source_id: string | null }>("select id, source_type, source_id from invoice_lines where invoice_id = $1", [invoiceId]);
+  const kept = new Set(lines.map((l) => l.id).filter(Boolean));
+  for (const l of lines) if (l.id && !existing.some((e) => e.id === l.id)) throw new UserError("A line was changed elsewhere. Reload the invoice and try again.");
+  const removed = existing.filter((e) => !kept.has(e.id));
+  for (const e of removed) {
+    await releaseLine(tx, e);
+    await tx.q("delete from invoice_lines where id = $1", [e.id]);
+  }
+  let sort = 0;
+  for (const l of lines) {
+    if (l.id) {
+      await tx.q("update invoice_lines set description = $2, quantity = $3, unit_cents = $4, sort = $5 where id = $1", [l.id, l.description.trim(), l.quantity, l.unit_cents, sort++]);
+    } else {
+      await tx.q(
+        `insert into invoice_lines (agency_id, invoice_id, description, quantity, unit_cents, amount_cents, source_type, sort)
+         values ($1,$2,$3,$4,$5,$6,'manual',$7)`,
+        [tx.agencyId, invoiceId, l.description.trim(), l.quantity, l.unit_cents, lineAmount(l), sort++],
+      );
+    }
+  }
+  await tx.q("update invoices set po_number = $2, notes = $3, due_date = $4, tax_rate = $5, exchange_rate = $6 where id = $1", [
+    invoiceId,
+    f.po_number.trim(),
+    f.notes,
+    f.due_date || null,
+    f.tax_rate,
+    f.exchange_rate || 1,
+  ]);
+  await recalcInvoice(tx, invoiceId);
+  const after = await tx.one<{ total_cents: number }>("select total_cents from invoices where id = $1", [invoiceId]);
+  await tx.audit("invoice.edited", "invoice", invoiceId, { ...before, lines: existing.length }, {
+    total_cents: after!.total_cents,
+    po_number: f.po_number.trim(),
+    due_date: f.due_date || null,
+    tax_rate: f.tax_rate,
+    lines: lines.length,
+    lines_removed: removed.length,
+  });
 }
 
 /** Release the sources of a draft back to the ready-to-bill queue. */
@@ -181,11 +251,7 @@ export async function voidInvoice(tx: Tx, invoiceId: string) {
   if (!inv) return;
   if (inv.status === "paid") throw new UserError("A paid invoice can't be voided. Use a credit note.");
   const lines = await tx.q<{ id: string; source_type: string; source_id: string | null }>("select id, source_type, source_id from invoice_lines where invoice_id = $1", [invoiceId]);
-  for (const l of lines) {
-    if (l.source_type === "milestone") await tx.q("update milestones set status = 'complete' where id = $1", [l.source_id]);
-    if (l.source_type === "time") await tx.q("update time_entries set invoice_line_id = null where invoice_line_id = $1", [l.id]);
-    if (l.source_type === "cost") await tx.q("update costs set invoice_line_id = null where invoice_line_id = $1", [l.id]);
-  }
+  for (const l of lines) await releaseLine(tx, l);
   if (inv.status === "draft") {
     await tx.q("delete from invoices where id = $1", [invoiceId]);
     await tx.audit("invoice.draft_deleted", "invoice", invoiceId);
@@ -200,8 +266,8 @@ export async function voidInvoice(tx: Tx, invoiceId: string) {
  * for clients that need them (ON-07), lock billed time and send it.
  */
 export async function sendInvoice(tx: Tx, invoiceId: string) {
-  const inv = await tx.one<{ status: string; company_id: string; entity_id: string; po_number: string; total_cents: number; currency: string }>(
-    "select status, company_id, entity_id, po_number, total_cents, currency from invoices where id = $1",
+  const inv = await tx.one<{ status: string; company_id: string; entity_id: string; po_number: string; total_cents: number; currency: string; due_date: string | null }>(
+    "select status, company_id, entity_id, po_number, total_cents, currency, due_date::text from invoices where id = $1",
     [invoiceId],
   );
   if (!inv) throw new UserError("Invoice not found.");
@@ -219,7 +285,7 @@ export async function sendInvoice(tx: Tx, invoiceId: string) {
   const number = `${entity!.invoice_prefix}${String(entity!.next_invoice_seq).padStart(5, "0")}`;
   const settings = await agencySettings(tx);
   const today = todayIn(settings.timezone);
-  const due = addDays(today, company!.payment_terms_days);
+  const due = inv.due_date && inv.due_date >= today ? inv.due_date : addDays(today, company!.payment_terms_days);
   await tx.q("update invoices set status = 'sent', number = $2, issue_date = $3, due_date = $4, sent_at = now() where id = $1", [invoiceId, number, today, due]);
   await tx.q("update time_entries set locked = true where invoice_line_id in (select id from invoice_lines where invoice_id = $1)", [invoiceId]);
   await tx.audit("invoice.sent", "invoice", invoiceId, { status: "draft" }, { status: "sent", number, total_cents: inv.total_cents, due_date: due });

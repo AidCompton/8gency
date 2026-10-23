@@ -73,6 +73,9 @@ test("invoice totals use integer cents and round tax once", () => {
   const t = invoiceTotals([{ quantity: 1.5, unit_cents: 95000 }, { quantity: 1, unit_cents: 333 }], 0.15);
   assert.deepEqual(t, { subtotal_cents: 142833, tax_cents: 21425, total_cents: 164258 });
   assert.equal(toCents("R 12,500.50"), 1250050);
+  assert.equal(toCents("55 200,50"), 5520050, "en-ZA comma decimal");
+  assert.equal(toCents("R12 500,5"), 1250050);
+  assert.equal(toCents("12,500"), 1250000, "comma + 3 digits is a thousands separator");
   assert.equal(formatMoney(1250050), "R12 500,50".replace(" ", formatMoney(1250050).charAt(3)));
 });
 

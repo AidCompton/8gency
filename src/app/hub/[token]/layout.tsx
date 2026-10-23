@@ -17,10 +17,17 @@ export default async function HubLayout({ children, params }: { children: React.
         <div aria-hidden className="h-1" style={{ background: contact.agency_color }} />
         <div className="mx-auto flex h-16 max-w-4xl items-center justify-between gap-3 px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-2.5">
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-sm font-bold text-white shadow-sm" style={{ background: contact.agency_color }} aria-hidden>
-                {contact.agency_name.charAt(0).toUpperCase()}
-              </span>
-              <span className="truncate font-semibold tracking-tight">{contact.agency_name}</span>
+            {contact.agency_logo_v ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={`/api/logo?hub=${encodeURIComponent(token)}&v=${contact.agency_logo_v}`} alt={contact.agency_name} className="logo-chip max-h-9 max-w-[188px] object-contain object-left" />
+            ) : (
+              <>
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-sm font-bold text-white shadow-sm" style={{ background: contact.agency_color }} aria-hidden>
+                  {contact.agency_name.charAt(0).toUpperCase()}
+                </span>
+                <span className="truncate font-semibold tracking-tight">{contact.agency_name}</span>
+              </>
+            )}
           </div>
           <div className="flex min-w-0 items-center gap-2.5">
             <div className="min-w-0 text-right">

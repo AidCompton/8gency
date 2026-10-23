@@ -19,6 +19,8 @@ export interface SessionUser {
   title: string;
   agency_name: string;
   agency_color: string;
+  /** Cache key for /api/logo; null when the agency has no logo. */
+  agency_logo_v: string | null;
   timezone: string;
   base_currency: string;
 }
@@ -65,7 +67,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   if (!token) return null;
   const rows = await adminQuery<SessionUser>(
     `select u.id, u.agency_id, u.email, u.name, u.role, u.title,
-            a.name as agency_name, a.brand_color as agency_color, a.timezone, a.base_currency
+            a.name as agency_name, a.brand_color as agency_color, case when a.logo is not null then floor(extract(epoch from a.logo_updated_at))::bigint::text end as agency_logo_v, a.timezone, a.base_currency
        from sessions s
        join users u on u.id = s.user_id and u.active
        join agencies a on a.id = s.agency_id

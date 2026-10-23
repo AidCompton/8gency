@@ -16,7 +16,9 @@ export function formatMoney(cents: number | null | undefined, currency = "ZAR", 
 export function toCents(input: string | number | null | undefined): number {
   if (input === null || input === undefined || input === "") return 0;
   if (typeof input === "number") return Math.round(input * 100);
-  const cleaned = input.replace(/[^0-9.\-]/g, "");
+  // "1,500.50" → comma is a thousands separator; "1 500,50" (en-ZA) → comma is the decimal mark.
+  const s = input.includes(".") ? input.replace(/,/g, "") : input.replace(/,(?=\d{1,2}\s*$)/, ".").replace(/,/g, "");
+  const cleaned = s.replace(/[^0-9.\-]/g, "");
   const n = Number(cleaned);
   return Number.isFinite(n) ? Math.round(n * 100) : 0;
 }

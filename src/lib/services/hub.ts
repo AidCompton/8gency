@@ -11,6 +11,7 @@ export interface HubContact {
   company_name: string;
   agency_name: string;
   agency_color: string;
+  agency_logo_v: string | null;
 }
 
 /**
@@ -20,7 +21,7 @@ export interface HubContact {
 export async function resolveHubToken(token: string): Promise<HubContact | null> {
   if (!token || token.length < 20) return null;
   const rows = await adminQuery<HubContact>(
-    `select c.id, c.agency_id, c.company_id, c.name, c.email, c.role, co.name as company_name, a.name as agency_name, a.brand_color as agency_color
+    `select c.id, c.agency_id, c.company_id, c.name, c.email, c.role, co.name as company_name, a.name as agency_name, a.brand_color as agency_color, case when a.logo is not null then floor(extract(epoch from a.logo_updated_at))::bigint::text end as agency_logo_v
        from contacts c join companies co on co.id = c.company_id join agencies a on a.id = c.agency_id
       where c.hub_token = $1 and c.active and (c.hub_token_expires_at is null or c.hub_token_expires_at > now())`,
     [token],
