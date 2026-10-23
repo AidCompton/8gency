@@ -30,6 +30,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       { href: "/app/retainers", label: "Retainers", icon: "retainers", group: "Money", show: can(user, "seeBudgetBurn") },
       { href: "/app/billing", label: "Billing", icon: "billing", group: "Money", show: can(user, "billing") },
       { href: "/app/pulse", label: "Pulse", icon: "pulse", group: "Money", show: can(user, "seeMargins") },
+      { href: "/app/automations", label: "Automations", icon: "automations", group: "Admin", show: can(user, "settings") },
       { href: "/app/settings", label: "Settings", icon: "settings", group: "Admin", show: can(user, "settings") },
       { href: "/app/audit", label: "Audit log", icon: "audit", group: "Admin", show: can(user, "audit") },
       { href: "/app/outbox", label: "Outbox", icon: "outbox", group: "Admin", show: can(user, "settings") },

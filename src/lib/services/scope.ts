@@ -3,6 +3,7 @@ import { todayIn } from "../domain/dates";
 import { formatMoney } from "../domain/money";
 import { changeRequestMessage, detectOutOfScope, scopeMeter } from "../domain/scope";
 import { summarise } from "../domain/text";
+import { fireEvent } from "./automationEngine";
 import {
   agencySettings,
   appUrl,
@@ -198,6 +199,7 @@ export async function decideChangeRequest(
     [id, d.decision, d.approverName, d.channel, scopeItemId],
   );
   await tx.audit(`change_request.${d.decision}`, "change_request", id, { status: cr.status }, { status: d.decision, by: d.approverName, channel: d.channel });
+  await fireEvent(tx, `change_request.${d.decision}`, id);
 
   const job = cr.job_id ? await tx.one<{ owner_id: string; account_manager_id: string }>("select owner_id, account_manager_id from jobs where id = $1", [cr.job_id]) : null;
   const finance = d.decision === "approved" ? await usersWithRoles(tx, ["finance"]) : [];
@@ -248,6 +250,7 @@ export async function submitClientRequest(
     href: "/app/scope",
     dedupe: `request:${row!.id}`,
   });
+  await fireEvent(tx, "client_request.received", row!.id);
   return { id: row!.id, oos };
 }
 

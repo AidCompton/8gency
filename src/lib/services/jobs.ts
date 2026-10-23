@@ -5,6 +5,7 @@ import { formatJobNumber } from "../domain/jobNumber";
 import { projectMargin } from "../domain/metrics";
 import { jobTemplate } from "../templates";
 import { syncUnbilledTime } from "./billing";
+import { fireEvent } from "./automationEngine";
 import { agencySettings, nextCounter, notify, recordActivity, UserError, usersWithRoles } from "./core";
 
 export type JobStatus = "briefing" | "in_progress" | "waiting_client" | "complete" | "closed";
@@ -130,6 +131,7 @@ export async function createJob(tx: Tx, input: CreateJobInput): Promise<string> 
     }
   }
   await tx.audit("job.created", "job", job.id, undefined, { number, name: input.name, billing_model: billing, fee_cents: input.fee_cents ?? 0, bill_time: input.bill_time ?? billing === "tm" });
+  await fireEvent(tx, "job.created", job.id);
   return job.id;
 }
 
@@ -192,6 +194,7 @@ export async function setJobStatus(tx: Tx, jobId: string, status: JobStatus, opt
     [jobId, status],
   );
   await tx.audit("job.status", "job", jobId, { status: job.status }, { status });
+  await fireEvent(tx, "job.status_changed", jobId);
 
   // Milestone triggers feed the ready-to-bill queue and tell finance (FN-01).
   const trigger = status === "in_progress" ? "start" : status === "complete" ? "completion" : null;

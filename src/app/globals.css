@@ -103,6 +103,8 @@
 }
 /* Agency logos are usually drawn for light backgrounds: give them a white chip (invisible on light surfaces). */
 .logo-chip { background: #fff; border-radius: 6px; padding: 3px 6px; }
+/* Automation builder canvas: n8n-style dot grid. */
+.canvas-dots { background-color: var(--bg); background-image: radial-gradient(circle, var(--border) 1.2px, transparent 1.2px); background-size: 20px 20px; }
 /* Inline-edit fields (invoice editor): look like text until hovered or focused. */
 .input-inline:not(:hover, :focus-visible) { border-color: transparent; background: transparent; box-shadow: none; }
 

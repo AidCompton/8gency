@@ -1,7 +1,7 @@
 import { CheckCircle } from "@phosphor-icons/react/ssr";
 import { LogoCard } from "@/components/LogoCard";
 import { SubmitButton } from "@/components/SubmitButton";
-import { addRateAction, addUserAction, deactivateUserAction, importAction, runAutomationsAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
+import { addRateAction, addUserAction, deactivateUserAction, importAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
 import { Badge, Card, Field, Money, PageHeader, Table, Tabs, Td, buttonClass } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatDate } from "@/lib/domain/dates";
@@ -37,7 +37,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           </ol>
         </Card>
       )}
-      <Tabs base="/app/settings" active={tab} tabs={[{ key: "agency", label: "Agency" }, { key: "entity", label: "Billing entity & tax" }, { key: "rates", label: "Rate card" }, { key: "team", label: "Team" }, { key: "import", label: "Import" }, { key: "automations", label: "Automations" }, { key: "data", label: "Data & security" }]} />
+      <Tabs base="/app/settings" active={tab} tabs={[{ key: "agency", label: "Agency" }, { key: "entity", label: "Billing entity & tax" }, { key: "rates", label: "Rate card" }, { key: "team", label: "Team" }, { key: "import", label: "Import" }, { key: "data", label: "Data & security" }]} />
 
       {tab === "agency" && (
         <div className="grid max-w-5xl items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -183,26 +183,6 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <p className="mt-3 text-xs text-ink-3">Direct API connectors for Asana, Harvest and Xero are on the roadmap; CSV works with all of them today.</p>
           </Card>
         </div>
-      )}
-
-      {tab === "automations" && (
-        <Card title="Automations (on by default)" className="max-w-3xl">
-          <ul className="space-y-2 text-sm">
-            {[
-              "Budget burn passes 75%, 90%, 100% → alert job owner and account manager",
-              "Task overdue, or blocked for over a day → alert assignee and job owner",
-              "Deliverable with client for 2+ days → daily reminder to the approver",
-              "Milestone reached → finance's ready-to-bill queue; flagged if not invoiced in time",
-              "Retainer burn ahead of the month → alert account manager and owner",
-              "Invoice reminders 3 days before due, then 1, 7, 14 days after; escalate at 14",
-              "New client → 30-, 60-, 90-day check-ins",
-              "Contract renewal or end → reminders at 90, 60 and 30 days",
-              "Retainer period opens → recurring job created from its template; annual price increase applied on the anniversary",
-            ].map((a) => <li key={a} className="flex gap-2"><CheckCircle aria-hidden size={16} weight="fill" className="mt-0.5 shrink-0 text-good-ink" />{a}</li>)}
-          </ul>
-          <form action={runAutomationsAction} className="mt-4"><SubmitButton className={buttonClass("secondary", "sm")}>Run now</SubmitButton></form>
-          <p className="mt-2 text-xs text-ink-3">In production a scheduler calls <code>/api/cron</code> every 15 minutes. Every rule is idempotent.</p>
-        </Card>
       )}
 
       {tab === "data" && (

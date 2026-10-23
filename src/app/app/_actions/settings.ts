@@ -4,7 +4,6 @@ import { hashPassword, requireUser, tenant } from "@/lib/auth";
 import { toCents } from "@/lib/domain/money";
 import { assertCan, can, type Role } from "@/lib/permissions";
 import { addTeamMember, deactivateUser, setAgencyLogo } from "@/lib/services/agency";
-import { runAutomations } from "@/lib/services/automations";
 import { UserError } from "@/lib/services/core";
 import { importClients, importTasks, importTime, parseCsv } from "@/lib/services/importer";
 
@@ -119,12 +118,6 @@ export async function importAction(fd: FormData) {
       return `/app/settings?tab=import&ok=${encodeURIComponent(`Imported ${s.rows} rows: ${created}.${skipped}`)}`;
     }),
   );
-}
-
-export async function runAutomationsAction() {
-  const user = await requireUser();
-  assertCan(user, "settings");
-  await act("/app/settings?tab=automations", () => tenant(user, (tx) => runAutomations(tx)), "Automations ran.");
 }
 
 export async function markNotificationsReadAction(fd: FormData) {

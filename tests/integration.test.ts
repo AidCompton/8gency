@@ -7,7 +7,10 @@ import { after, before, describe, test } from "node:test";
 import { adminQuery, closePools, withAdminTx, withTenant, type Tx } from "../src/lib/db";
 import { addDays, todayIn } from "../src/lib/domain/dates";
 import { addContact, createAgencyWithOwner, createCompany, setAgencyLogo } from "../src/lib/services/agency";
-import { createInvoice, readyToBill, saveDraftInvoice, sendInvoice, syncUnbilledTime, type DraftInvoiceEdit } from "../src/lib/services/billing";
+import { createInvoice, readyToBill, recordPayment, saveDraftInvoice, sendInvoice, syncUnbilledTime, type DraftInvoiceEdit } from "../src/lib/services/billing";
+import { TEMPLATES } from "../src/lib/domain/automations";
+import { enabledBuiltins, runScheduledAutomations } from "../src/lib/services/automationEngine";
+import { saveAutomation, setAutomationEnabled, validateFlow } from "../src/lib/services/automations";
 import { processInbound } from "../src/lib/services/inbound";
 import { addTask, createJob, lockScope, setJobBillTime, setJobStatus } from "../src/lib/services/jobs";
 import { createRetainer, reconcilePeriod } from "../src/lib/services/retainers";
@@ -289,6 +292,75 @@ describe("operating rules", () => {
       const only = (await tx.one<{ id: string }>("select id from time_entries where invoice_line_id in (select id from invoice_lines where invoice_id = $1)", [next[0].id]))!.id;
       await deleteTimeEntry(tx, A.userId, only);
       assert.equal((await drafts()).length, 0);
+    });
+  });
+
+  test("automations: events, filters, scheduled triggers, contained failures and built-in switches", async () => {
+    await asA(async (tx) => {
+      const companyId = await createCompany(tx, { name: `Auto ${run}` });
+      const other = await createCompany(tx, { name: `Other ${run}` });
+      await addContact(tx, { company_id: companyId, name: "Bea Billing", email: `bill-${run}@client.example`, phone: "+27820000000", role: "billing" });
+      const runs = (id: string) => tx.q<{ status: string; summary: string; record_key: string }>("select status, summary, record_key from automation_runs where automation_id = $1 order by created_at", [id]);
+
+      // A template, used as-is: thank the client when an invoice is paid. Filtered to this client only.
+      const thanks = TEMPLATES.find((t) => t.key === "thank_on_payment")!;
+      const auto = await saveAutomation(tx, null, { name: thanks.name, description: "", enabled: true, flow: { ...thanks.flow, filters: [{ field: "company_id", value: companyId }] } });
+      // Broken on purpose: an invoice has no job, so "create a task" fails. The payment must still go through.
+      const broken = await saveAutomation(tx, null, { name: "Broken", description: "", enabled: true, flow: { trigger: { type: "invoice.paid", config: {} }, filters: [], actions: [{ type: "create_task", config: { title: "x", assignee: "unassigned", due_in_days: 1 } }] } });
+
+      await readyJob(tx, companyId, { fee: 20_000_00, template: "campaign" });
+      const inv = await createInvoice(tx, companyId, (await readyToBill(tx, companyId)).map((i) => i.key));
+      await sendInvoice(tx, inv);
+      const total = (await tx.one<{ total_cents: number }>("select total_cents from invoices where id = $1", [inv]))!.total_cents;
+      await recordPayment(tx, inv, total, "EFT");
+      assert.equal((await tx.one<{ status: string }>("select status from invoices where id = $1", [inv]))!.status, "paid", "a failing automation never blocks the payment");
+
+      const [ok] = await runs(auto);
+      assert.equal(ok.status, "ok");
+      const mail = await tx.one<{ subject: string; body: string; to_address: string }>("select subject, body, to_address from outbox_messages where related_type = 'automation' and related_id = $1", [auto]);
+      assert.equal(mail?.to_address, `bill-${run}@client.example`);
+      assert.match(mail!.subject, /^Payment received: INV-/);
+      assert.match(mail!.body, /^Hi Bea,/);
+      const [bad] = await runs(broken);
+      assert.equal(bad.status, "error");
+      assert.match(bad.summary, /nowhere to add the task/);
+
+      // The filter keeps it to its client: another client's payment doesn't trigger it.
+      await readyJob(tx, other, { fee: 20_000_00, template: "campaign" });
+      const inv2 = await createInvoice(tx, other, (await readyToBill(tx, other)).map((i) => i.key));
+      await sendInvoice(tx, inv2);
+      await recordPayment(tx, inv2, (await tx.one<{ total_cents: number }>("select total_cents from invoices where id = $1", [inv2]))!.total_cents, "EFT");
+      assert.equal((await runs(auto)).length, 1);
+
+      // Scheduled: an overdue invoice gets one WhatsApp, however often the scheduler runs.
+      const nudge = TEMPLATES.find((t) => t.key === "overdue_whatsapp")!;
+      const wa = await saveAutomation(tx, null, { name: nudge.name, description: "", enabled: true, flow: { ...nudge.flow, filters: [{ field: "company_id", value: companyId }] } });
+      await readyJob(tx, companyId, { fee: 30_000_00, template: "campaign" });
+      const late = await createInvoice(tx, companyId, (await readyToBill(tx, companyId)).map((i) => i.key));
+      await sendInvoice(tx, late);
+      await tx.q("update invoices set due_date = $2 where id = $1", [late, addDays(todayIn(), -9)]);
+      await runScheduledAutomations(tx);
+      await runScheduledAutomations(tx);
+      const waRuns = await runs(wa);
+      assert.equal(waRuns.length, 1);
+      assert.equal(waRuns[0].status, "ok");
+      const msg = await tx.one<{ channel: string; body: string }>("select channel, body from outbox_messages where related_type = 'automation' and related_id = $1", [wa]);
+      assert.equal(msg?.channel, "whatsapp");
+      assert.match(msg!.body, /9 days overdue/);
+
+      // Switched off = doesn't run.
+      await setAutomationEnabled(tx, auto, false);
+      assert.equal((await tx.q("select 1 from automations where id = $1 and enabled", [auto])).length, 0);
+
+      // Built-in rules exist as rows and can be switched off.
+      const on = await enabledBuiltins(tx);
+      assert.ok(on.has("budget_burn") && on.has("collections"));
+      await tx.q("update automations set enabled = false where builtin = 'collections'");
+      assert.equal((await enabledBuiltins(tx)).has("collections"), false);
+
+      // Connector actions can't be saved until the connector exists.
+      assert.throws(() => validateFlow({ trigger: { type: "invoice.sent", config: {} }, filters: [], actions: [{ type: "slack_message", config: {} }] }), /needs a connector/);
+      assert.throws(() => validateFlow({ trigger: null, filters: [], actions: [] }), /trigger/);
     });
   });
 

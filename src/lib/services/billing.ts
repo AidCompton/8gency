@@ -1,6 +1,7 @@
 import type { Tx } from "../db";
 import { addDays, daysBetween, formatShort, todayIn } from "../domain/dates";
 import { formatMoney, invoiceTotals, lineAmount } from "../domain/money";
+import { fireEvent } from "./automationEngine";
 import { agencySettings, appUrl, ensureHubToken, notify, queueMessage, UserError } from "./core";
 import { firstName } from "../domain/text";
 
@@ -401,6 +402,7 @@ export async function sendInvoice(tx: Tx, invoiceId: string) {
   await tx.q("update invoices set status = 'sent', number = $2, issue_date = $3, due_date = $4, sent_at = now() where id = $1", [invoiceId, number, today, due]);
   await tx.q("update time_entries set locked = true where invoice_line_id in (select id from invoice_lines where invoice_id = $1)", [invoiceId]);
   await tx.audit("invoice.sent", "invoice", invoiceId, { status: "draft" }, { status: "sent", number, total_cents: inv.total_cents, due_date: due });
+  await fireEvent(tx, "invoice.sent", invoiceId);
 
   const billing = await tx.q<{ id: string; name: string; email: string }>(
     "select id, name, email from contacts where company_id = $1 and role = 'billing' and active",
@@ -440,6 +442,8 @@ export async function recordPayment(tx: Tx, invoiceId: string, amountCents: numb
     settled ? "paid" : "sent",
   ]);
   await tx.audit("invoice.payment", "invoice", invoiceId, { paid_cents: inv.paid_cents }, { paid_cents: paid, reference, status: settled ? "paid" : "sent" });
+  // Paid by the client (not settled by a write-off): a thank-you is appropriate.
+  if (settled) await fireEvent(tx, "invoice.paid", invoiceId);
 }
 
 export const WRITE_OFF_REASONS = [

@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Tx } from "../db";
 import { nextRoundNeedsChangeRequest } from "../domain/scope";
+import { fireEvent } from "./automationEngine";
 import { agencySettings, appUrl, createActionCode, ensureHubToken, notify, queueMessage, recordActivity, UserError } from "./core";
 import { createChangeRequest } from "./scope";
 import { firstName } from "../domain/text";
@@ -221,6 +222,7 @@ export async function sendToClient(tx: Tx, deliverableId: string, opts: { absorb
   });
   await recordActivity(tx, "deliverable.sent", { jobId: d.job_id });
   await tx.audit("deliverable.sent_to_client", "deliverable", deliverableId, { status: d.status }, { status: "client_review", version: v.number, round: d.rounds_used + 1, to: approver.name });
+  await fireEvent(tx, "deliverable.sent_to_client", deliverableId);
   return { sent: true };
 }
 
@@ -265,6 +267,7 @@ export async function clientDecision(
   );
   await tx.q("update action_tokens set used_at = now() where subject_type = 'deliverable' and subject_id = $1 and used_at is null", [deliverableId]);
   await tx.audit(`deliverable.client_${d.decision}`, "deliverable", deliverableId, { status: "client_review" }, { version: v.number, by: d.approverName, channel: d.channel });
+  await fireEvent(tx, d.decision === "approved" ? "deliverable.approved" : "deliverable.changes_requested", deliverableId);
   const assignees = await tx.q<{ id: string }>("select distinct assignee_id as id from tasks where job_id = $1 and assignee_id is not null", [del.job_id]);
   await notify(tx, [del.owner_id, del.account_manager_id, ...assignees.map((a) => a.id)], {
     kind: "client_decision",
