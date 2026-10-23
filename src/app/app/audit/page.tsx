@@ -69,6 +69,7 @@ const ACTION: Record<string, string> = {
   "automation.updated": "Automation edited",
   "automation.toggled": "Automation switched on or off",
   "automation.deleted": "Automation deleted",
+  "connector.requested": "Connector requested",
   "invoice.payment": "Payment recorded",
   "invoice.sent": "Invoice issued",
   "invoice.voided": "Invoice voided",

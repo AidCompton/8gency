@@ -1,4 +1,4 @@
-import { Bell, SignOut } from "@phosphor-icons/react/ssr";
+import { Bell, Plugs, SignOut } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import { Suspense } from "react";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -92,6 +92,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 <SubmitButton className="min-h-7 rounded-full bg-ink px-3 text-xs font-medium text-bg transition-opacity hover:opacity-85 pointer-coarse:min-h-11">Stop</SubmitButton>
               </form>
             )}
+            <Link
+              href="/app/connectors"
+              aria-label="Connectors"
+              title="Connectors"
+              className="grid h-9 w-9 place-items-center rounded-lg text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink pointer-coarse:h-11 pointer-coarse:w-11"
+            >
+              <Plugs aria-hidden size={20} />
+            </Link>
             <Link
               href="/app/notifications"
               aria-label={unread ? `Inbox, ${unread} unread` : "Inbox"}
