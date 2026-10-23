@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { SubmitButton } from "@/components/SubmitButton";
 import { reconcileAction } from "../../_actions/retainers";
-import { Card, Meter, Money, PageHeader, Pct, StatusBadge, Table, Td, buttonClass } from "@/components/ui";
+import { Card, Meter, Money, PageHeader, Pct, StatusBadge, Table, Td, buttonClass, StatusIcon } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
 import { formatDate, formatShort, todayIn } from "@/lib/domain/dates";
 import { can } from "@/lib/permissions";
@@ -32,12 +33,12 @@ export default async function RetainerPage({ params }: { params: Promise<{ id: s
     <>
       <PageHeader back={{ href: "/app/retainers", label: "Retainers" }} title={`${r.company_name} · ${r.name}`}
         subtitle={<>{r.hours_per_period}h / month · {r.billing_timing === "advance" ? "billed in advance" : "billed in arrears"} · rollover {r.rollover === "capped" ? `capped at ${r.rollover_cap_hours}h` : "none"}{r.next_increase_date ? ` · next increase ${r.price_increase_pct}% on ${formatDate(r.next_increase_date)}` : ""}</>} />
-      <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <Card title={s.period ? `This period: ${formatShort(s.period.starts_on)} – ${formatShort(s.period.ends_on)}` : "No period open"}>
           <Meter value={s.usedHours} max={s.allocated} label="Hours used" sublabel={`${s.usedHours}h of ${s.allocated}h${s.period?.rollover_in_hours ? ` (incl. ${s.period.rollover_in_hours}h rolled over)` : ""}`} marker={s.burn?.elapsed} markerLabel="period elapsed" />
           {s.burn && (
             <p className={`mt-2 text-sm ${s.burn.alert ? "text-critical-ink" : "text-ink-2"}`}>
-              {s.burn.alert ? "● " : ""}{Math.round(s.burn.burn * 100)}% used with {Math.round(s.burn.elapsed * 100)}% of the period gone. At this pace the month ends at {Math.round(s.burn.projected * 100)}%.
+              {s.burn.alert && <><StatusIcon tone="critical" /> </>}{Math.round(s.burn.burn * 100)}% used with {Math.round(s.burn.elapsed * 100)}% of the period gone. At this pace the month ends at {Math.round(s.burn.projected * 100)}%.
             </p>
           )}
           {data.scope.length > 0 && (
@@ -72,11 +73,11 @@ export default async function RetainerPage({ params }: { params: Promise<{ id: s
                       <input type="hidden" name="period_id" value={p.id} />
                       {over > 0 ? (
                         <>
-                          <button name="action" value="change_request" className={buttonClass("primary", "sm")}>Bill overage</button>
-                          <input name="reason" placeholder="or absorb because…" className="!w-36 !py-1 text-xs" />
-                          <button name="action" value="absorbed" className={buttonClass("ghost", "sm")}>Absorb</button>
+                          <SubmitButton name="action" value="change_request" className={buttonClass("primary", "sm")}>Bill overage</SubmitButton>
+                          <input name="reason" aria-label="Reason to absorb the overage" placeholder="or absorb because…" className="field-sm !w-40" />
+                          <SubmitButton name="action" value="absorbed" className={buttonClass("ghost", "sm")}>Absorb</SubmitButton>
                         </>
-                      ) : <button name="action" value="change_request" className={buttonClass("secondary", "sm")}>Reconcile</button>}
+                      ) : <SubmitButton name="action" value="change_request" className={buttonClass("secondary", "sm")}>Reconcile</SubmitButton>}
                     </form>
                   )}
                 </Td>

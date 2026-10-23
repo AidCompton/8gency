@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Card, Empty, LinkButton, Meter, Money, PageHeader, Pct } from "@/components/ui";
+import { Card, Empty, LinkButton, Meter, Money, PageHeader, Pct, StatusIcon } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatShort } from "@/lib/domain/dates";
 import { can } from "@/lib/permissions";
@@ -25,7 +25,7 @@ export default async function RetainersPage() {
                 <div><div className="text-xs text-ink-3">Fee</div><Money cents={r.period?.fee_cents ?? r.retainer.fee_cents} visible={money} compact /></div>
                 <div><div className="text-xs text-ink-3">Margin</div>{money ? <Pct n={r.margin} /> : "•••"}</div>
               </div>
-              {r.burn?.alert && <p className="mt-2 text-sm text-critical-ink">● Burn is {Math.round(r.burn.aheadBy * 100)} points ahead of the period. Talk to the client or raise a change request.</p>}
+              {r.burn?.alert && <p className="mt-2 flex items-start gap-1.5 text-sm text-critical-ink"><StatusIcon tone="critical" /> Burn is {Math.round(r.burn.aheadBy * 100)} points ahead of the period. Talk to the client or raise a change request.</p>}
             </Card>
           ))}
         </div>

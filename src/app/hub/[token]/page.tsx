@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { SubmitButton } from "@/components/SubmitButton";
 import { hubRequestAction } from "./actions";
-import { Card, Empty, Meter, Money, StatusBadge, buttonClass } from "@/components/ui";
+import { Card, Empty, Meter, Money, StatusBadge, buttonClass, Field, StatusIcon } from "@/components/ui";
 import { ageSince, formatShort } from "@/lib/domain/dates";
 import { asContact, hubOverview, resolveHubToken } from "@/lib/services/hub";
 import { firstName } from "@/lib/domain/text";
@@ -31,7 +32,7 @@ export default async function HubHome({ params }: { params: Promise<{ token: str
               </li>
             ))}
           </ul>
-        ) : <p className="text-sm text-ink-2">Nothing needs you right now. ✓</p>}
+        ) : <p className="flex items-center gap-1.5 text-sm text-ink-2"><StatusIcon tone="good" /> Nothing needs you right now.</p>}
       </Card>
       <div className="grid gap-5 md:grid-cols-2">
         <Card title="In progress">
@@ -74,8 +75,8 @@ export default async function HubHome({ params }: { params: Promise<{ token: str
       <Card title="Ask for something">
         <form action={hubRequestAction} className="space-y-2">
           <input type="hidden" name="token" value={token} />
-          <textarea name="body" required placeholder="What do you need, and by when?" />
-          <button className={buttonClass("secondary", "sm")}>Send request</button>
+          <Field label="What do you need, and by when?"><textarea name="body" required /></Field>
+          <SubmitButton className={buttonClass("secondary", "sm")}>Send request</SubmitButton>
           <p className="text-xs text-ink-3">Your account manager confirms timing and lets you know before anything outside the agreed scope is charged.</p>
         </form>
         {o.requests.length > 0 && (

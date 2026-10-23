@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { SubmitButton } from "@/components/SubmitButton";
 import { dismissRequestAction, triageChangeAction, triageTaskAction } from "../_actions/scope";
-import { BarList, Badge, Card, Empty, Money, PageHeader, StatusBadge, Table, Tabs, Td, buttonClass } from "@/components/ui";
+import { BarList, Badge, Card, Empty, Money, PageHeader, StatusBadge, Table, Tabs, Td, buttonClass, Field, Stat } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { ageSince } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
@@ -45,9 +46,9 @@ export default async function ScopePage({ searchParams }: { searchParams: Promis
     <>
       <PageHeader title="Scope Guard" subtitle="New client requests are triaged here — never straight onto someone's list. Out-of-scope work becomes a priced change request, or is absorbed on the record." />
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
-        <div className="rounded-xl border border-line bg-surface p-4"><div className="text-xs uppercase tracking-wide text-ink-3">To triage</div><div className="text-2xl font-semibold tnum">{data.requests.length}</div></div>
-        <div className="rounded-xl border border-line bg-surface p-4"><div className="text-xs uppercase tracking-wide text-ink-3">Recovered, 90 days</div><div className="text-2xl font-semibold tnum"><Money cents={data.won} visible={money} compact /></div><div className="text-xs text-ink-2">Approved change requests</div></div>
-        <div className="rounded-xl border border-line bg-surface p-4"><div className="text-xs uppercase tracking-wide text-ink-3">Given away</div><div className="text-2xl font-semibold tnum text-warning-ink"><Money cents={absorbedTotal} visible={money} compact /></div><div className="text-xs text-ink-2">Absorbed, all time</div></div>
+        <Stat label="To triage" value={data.requests.length} hint={data.requests.length ? "New client requests" : "Inbox zero"} />
+        <Stat label="Recovered, 90 days" value={<Money cents={data.won} visible={money} compact />} hint="Approved change requests" tone="good" />
+        <Stat label="Given away" value={<Money cents={absorbedTotal} visible={money} compact />} hint="Absorbed, all time" tone={absorbedTotal > 0 ? "warning" : undefined} />
       </div>
       <Tabs base="/app/scope" active={tab} tabs={[{ key: "triage", label: `Triage · ${data.requests.length}` }, { key: "changes", label: "Change requests" }, { key: "absorbed", label: "Absorbed" }]} />
 
@@ -60,7 +61,7 @@ export default async function ScopePage({ searchParams }: { searchParams: Promis
               <li key={r.id} className="rounded-xl border border-line bg-surface p-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="text-xs text-ink-3"><b className="text-ink-2">{r.company_name}</b> · {r.contact ?? "staff"} via {r.channel} · {ageSince(r.created_at)} ago</div>
-                  {r.oos_score >= 30 ? <Badge tone="critical">● Possibly out of scope ({r.oos_score})</Badge> : <Badge tone="good">Looks in scope</Badge>}
+                  {r.oos_score >= 30 ? <Badge tone="critical" dot>Possibly out of scope ({r.oos_score})</Badge> : <Badge tone="good" dot>Looks in scope</Badge>}
                 </div>
                 <p className="mt-2 whitespace-pre-wrap">{r.body}</p>
                 {r.oos_signals.length > 0 && <p className="mt-1 text-xs text-ink-2">8gent flagged: {r.oos_signals.join(", ")}</p>}
@@ -68,26 +69,30 @@ export default async function ScopePage({ searchParams }: { searchParams: Promis
                   <form action={triageTaskAction} className="space-y-2 rounded-lg bg-surface-2 p-3">
                     <div className="text-xs font-semibold uppercase tracking-wide text-ink-3">In scope → task</div>
                     <input type="hidden" name="request_id" value={r.id} />
-                    <input name="title" placeholder="Task title" defaultValue={summarise(r.body)} />
-                    <select name="job_scope" required defaultValue="">
-                      <option value="" disabled>Job and scope item…</option>
-                      {options.map((o) => <option key={o.scope_id} value={`${o.job_id}:${o.scope_id}`}>{o.number} · {o.scope_name}</option>)}
-                    </select>
+                    <Field label="Task title"><input name="title" defaultValue={summarise(r.body)} /></Field>
+                    <Field label="Job and scope item">
+                      <select name="job_scope" required defaultValue="">
+                        <option value="" disabled>Choose…</option>
+                        {options.map((o) => <option key={o.scope_id} value={`${o.job_id}:${o.scope_id}`}>{o.number} · {o.scope_name}</option>)}
+                      </select>
+                    </Field>
                     <div className="grid grid-cols-2 gap-2">
-                      <select name="assignee_id" defaultValue=""><option value="">Assignee…</option>{data.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
-                      <input type="date" name="due_date" />
+                      <Field label="Assignee"><select name="assignee_id" defaultValue=""><option value="">Unassigned</option>{data.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></Field>
+                      <Field label="Due"><input type="date" name="due_date" /></Field>
                     </div>
-                    <button className={buttonClass("secondary", "sm")}>Accept as in-scope</button>
+                    <SubmitButton className={buttonClass("secondary", "sm")}>Accept as in-scope</SubmitButton>
                   </form>
                   <form action={triageChangeAction} className="space-y-2 rounded-lg bg-surface-2 p-3">
                     <div className="text-xs font-semibold uppercase tracking-wide text-ink-3">Out of scope → change request</div>
                     <input type="hidden" name="request_id" value={r.id} />
-                    <input name="title" placeholder="Change request title" defaultValue={summarise(r.body)} />
-                    <select name="job_id" defaultValue={r.job_id ?? ""}><option value="">No specific job</option>{jobs.map((o) => <option key={o.job_id} value={o.job_id}>{o.number}</option>)}</select>
-                    <input name="estimate_hours" placeholder="Estimated hours" inputMode="decimal" />
+                    <Field label="Change request title"><input name="title" defaultValue={summarise(r.body)} /></Field>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Field label="Job"><select name="job_id" defaultValue={r.job_id ?? ""}><option value="">No specific job</option>{jobs.map((o) => <option key={o.job_id} value={o.job_id}>{o.number}</option>)}</select></Field>
+                      <Field label="Estimated hours"><input name="estimate_hours" inputMode="decimal" /></Field>
+                    </div>
                     <div className="flex gap-2">
-                      <button className={buttonClass("primary", "sm")}>Draft change request</button>
-                      <button formAction={dismissRequestAction} className={buttonClass("ghost", "sm")}>Dismiss</button>
+                      <SubmitButton className={buttonClass("primary", "sm")}>Draft change request</SubmitButton>
+                      <SubmitButton formAction={dismissRequestAction} className={buttonClass("ghost", "sm")}>Dismiss</SubmitButton>
                     </div>
                   </form>
                 </div>
@@ -116,7 +121,7 @@ export default async function ScopePage({ searchParams }: { searchParams: Promis
       )}
 
       {tab === "absorbed" && (
-        <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
           <Card pad={false}>
             <Table head={["Absorbed work", "Client", "Value", "Reason", "By"]} empty="Nothing absorbed. Good.">
               {data.absorbed.map((a) => (

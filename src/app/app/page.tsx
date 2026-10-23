@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { BarList, Card, Empty, LinkButton, Meter, Money, PageHeader, Pct, Stat, HealthBadge } from "@/components/ui";
+import { BarList, Card, Empty, LinkButton, Meter, Money, PageHeader, Pct, Stat, HealthBadge, TextLink } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
 import { ageSince } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
@@ -55,7 +55,7 @@ export default async function Home() {
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
-        <Card title="Agency Health Scan · last 90 days" className="lg:col-span-2" actions={<Link className="text-sm text-brand hover:underline" href="/app/pulse">Full scan →</Link>}>
+        <Card title="Agency Health Scan · last 90 days" className="lg:col-span-2" actions={<TextLink href="/app/pulse">Full scan</TextLink>}>
           <p className="mb-4 text-sm text-ink-2">
             <span className="text-2xl font-semibold text-ink tnum">{formatMoney(data.scan.total, "ZAR", { compact: true })}</span> leaking from scope, retainers, billing and pricing,
             plus <b className="tnum">{formatMoney(data.scan.cashAtRisk, "ZAR", { compact: true })}</b> overdue.
@@ -88,7 +88,7 @@ export default async function Home() {
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        <Card title="Jobs at risk" actions={<Link className="text-sm text-brand hover:underline" href="/app/jobs">Traffic →</Link>}>
+        <Card title="Jobs at risk" actions={<TextLink href="/app/jobs">Traffic</TextLink>}>
           {data.risks.length ? (
             <ul className="space-y-3 text-sm">
               {data.risks.map((r) => (

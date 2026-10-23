@@ -1,4 +1,6 @@
+import { CaretLeft, CaretRight } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
+import { SubmitButton } from "@/components/SubmitButton";
 import { confirmSuggestionsAction, deleteTimeAction, logTimeAction } from "../_actions/time";
 import { Badge, Card, Empty, Field, Meter, PageHeader, Table, Td, buttonClass } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
@@ -38,9 +40,9 @@ export default async function TimePage({ searchParams }: { searchParams: Promise
     <>
       <PageHeader title="Time" subtitle="Confirm your day in a couple of minutes. Suggestions come only from your own activity in 8gency and are visible only to you until you confirm them." />
       <div className="mb-4 flex items-center gap-2">
-        <Link className={buttonClass("ghost", "sm")} href={`/app/time?day=${addDays(week, -7)}`}>← Prev week</Link>
+        <Link className={buttonClass("ghost", "sm")} href={`/app/time?day=${addDays(week, -7)}`}><CaretLeft aria-hidden size={14} /> Prev week</Link>
         <Link className={buttonClass("ghost", "sm")} href="/app/time">This week</Link>
-        <Link className={buttonClass("ghost", "sm")} href={`/app/time?day=${addDays(week, 7)}`}>Next week →</Link>
+        <Link className={buttonClass("ghost", "sm")} href={`/app/time?day=${addDays(week, 7)}`}>Next week <CaretRight aria-hidden size={14} /></Link>
       </div>
       <div className="mb-5 grid grid-cols-7 gap-1.5">
         {days.map((d) => {
@@ -53,7 +55,7 @@ export default async function TimePage({ searchParams }: { searchParams: Promise
           );
         })}
       </div>
-      <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-4">
           <Card title={`Suggested for ${formatShort(day)}`}>
             {data.suggestions.length ? (
@@ -68,12 +70,12 @@ export default async function TimePage({ searchParams }: { searchParams: Promise
                         <div className="truncate text-sm font-medium">{s.job_number} · {s.task_title ?? s.job_name}</div>
                         <div className="text-xs text-ink-3">Because you {s.reason}{s.out_of_scope && !s.has_change_request ? " · out of scope: a change request will be drafted" : ""}</div>
                       </div>
-                      <input name={`hours:${key}`} defaultValue={s.hours} className="!w-20 text-right" inputMode="decimal" aria-label="Hours" />
+                      <input name={`hours:${key}`} defaultValue={s.hours} className="field-sm !w-20 text-right" inputMode="decimal" aria-label="Hours" />
                       <label className="flex items-center gap-1 text-xs"><input type="checkbox" name={`skip:${key}`} /> skip</label>
                     </div>
                   );
                 })}
-                <button className={buttonClass("primary", "sm")}>Confirm {formatShort(day)}</button>
+                <SubmitButton className={buttonClass("primary", "sm")}>Confirm {formatShort(day)}</SubmitButton>
               </form>
             ) : <p className="text-sm text-ink-3">No suggestions: either your day is logged, or there's no 8gency activity to build from yet. Starting a timer from My Day captures time as you go.</p>}
           </Card>
@@ -86,7 +88,7 @@ export default async function TimePage({ searchParams }: { searchParams: Promise
                   <Td className="text-xs text-ink-2">{e.category.replace(/_/g, " ")}</Td>
                   <Td right>{e.hours}</Td>
                   <Td>{e.locked || e.invoice_line_id ? <span title="Locked">🔒</span> : (
-                    <form action={deleteTimeAction}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="back" value={`/app/time?day=${day}`} /><button className={buttonClass("ghost", "sm")}>Remove</button></form>
+                    <form action={deleteTimeAction}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="back" value={`/app/time?day=${day}`} /><SubmitButton confirm="Remove this time entry?" className={buttonClass("ghost", "sm")}>Remove</SubmitButton></form>
                   )}</Td>
                 </tr>
               ))}
@@ -109,9 +111,9 @@ export default async function TimePage({ searchParams }: { searchParams: Promise
               </div>
               <Field label="Category"><select name="category" defaultValue="">{[{ key: "", label: "Default for job" }, ...TIME_CATEGORIES].map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select></Field>
               <Field label="Notes"><input name="notes" /></Field>
-              <Field label="⚑ Out-of-scope tasks" hint="Required by Scope Guard."><select name="oos_resolution" defaultValue="change_request"><option value="change_request">Draft a change request</option><option value="absorbed">Absorb (give a reason)</option></select></Field>
-              <input name="absorb_reason" placeholder="Absorb reason" />
-              <button className={buttonClass("primary", "sm")}>Log</button>
+              <Field label="Out-of-scope tasks" hint="Required by Scope Guard."><select name="oos_resolution" defaultValue="change_request"><option value="change_request">Draft a change request</option><option value="absorbed">Absorb (give a reason)</option></select></Field>
+              <Field label="Absorb reason" hint="Only if absorbing."><input name="absorb_reason" /></Field>
+              <SubmitButton className={buttonClass("primary", "sm")}>Log</SubmitButton>
             </form>
           </Card>
           <Card title="This week">

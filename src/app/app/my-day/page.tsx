@@ -1,7 +1,8 @@
 import Link from "next/link";
+import { SubmitButton } from "@/components/SubmitButton";
 import { setTaskStatusAction } from "../_actions/jobs";
 import { startTimerAction } from "../_actions/time";
-import { Badge, Card, Empty, Meter, PageHeader, buttonClass } from "@/components/ui";
+import { Badge, Card, Empty, Meter, PageHeader, buttonClass, TextLink } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
 import { formatShort } from "@/lib/domain/dates";
 import { myDay, type MyDayTask } from "@/lib/services/myday";
@@ -11,7 +12,7 @@ export const metadata = { title: "My Day" };
 
 function TaskCard({ t, running }: { t: MyDayTask; running: boolean }) {
   return (
-    <li className="rounded-xl border border-line bg-surface p-4">
+    <li className="rounded-xl border border-line bg-surface p-4 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-xs text-ink-3">
@@ -20,7 +21,7 @@ function TaskCard({ t, running }: { t: MyDayTask; running: boolean }) {
           <div className="mt-0.5 font-medium">{t.title}</div>
         </div>
         <div className="flex items-center gap-1.5">
-          {t.out_of_scope && <Badge tone={t.change_request_id ? "info" : "critical"}>{t.change_request_id ? "Change request" : "● Out of scope"}</Badge>}
+          {t.out_of_scope && <Badge tone={t.change_request_id ? "info" : "critical"}>{t.change_request_id ? "Change request" : "Out of scope"}</Badge>}
           {t.due_date && <Badge tone="neutral">Due {formatShort(t.due_date)}</Badge>}
         </div>
       </div>
@@ -39,23 +40,23 @@ function TaskCard({ t, running }: { t: MyDayTask; running: boolean }) {
             <input type="hidden" name="job_id" value={t.job_id} />
             <input type="hidden" name="task_id" value={t.id} />
             <input type="hidden" name="back" value="/app/my-day" />
-            <button className={buttonClass("primary", "sm")}>▶ Start</button>
+            <SubmitButton className={buttonClass("primary", "sm")}>▶ Start</SubmitButton>
           </form>
         )}
-        {running && <Badge tone="critical">● Timer running</Badge>}
+        {running && <Badge tone="critical" dot>Timer running</Badge>}
         <form action={setTaskStatusAction} className="flex flex-wrap gap-2">
           <input type="hidden" name="task_id" value={t.id} />
           <input type="hidden" name="back" value="/app/my-day" />
-          <button name="status" value="done" className={buttonClass("secondary", "sm")}>Done</button>
+          <SubmitButton name="status" value="done" className={buttonClass("secondary", "sm")}>Done</SubmitButton>
           {t.status !== "blocked" ? (
             <>
-              <input name="blocked_reason" placeholder="Blocked by…" className="!w-40 !py-1 text-xs" />
-              <button name="status" value="blocked" className={buttonClass("ghost", "sm")}>Block</button>
+              <input name="blocked_reason" aria-label="What is blocking this task" placeholder="Blocked by…" className="field-sm !w-40" />
+              <SubmitButton name="status" value="blocked" className={buttonClass("ghost", "sm")}>Block</SubmitButton>
             </>
           ) : (
-            <button name="status" value="in_progress" className={buttonClass("ghost", "sm")}>Unblock</button>
+            <SubmitButton name="status" value="in_progress" className={buttonClass("ghost", "sm")}>Unblock</SubmitButton>
           )}
-          {t.status !== "waiting_client" && <button name="status" value="waiting_client" className={buttonClass("ghost", "sm")}>Waiting on client</button>}
+          {t.status !== "waiting_client" && <SubmitButton name="status" value="waiting_client" className={buttonClass("ghost", "sm")}>Waiting on client</SubmitButton>}
         </form>
       </div>
     </li>
@@ -79,7 +80,7 @@ export default async function MyDayPage() {
   return (
     <>
       <PageHeader title="My Day" subtitle={`${formatShort(d.today)} · everything assigned to you, across every client`} />
-      <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div>
           <Section title="Overdue" tasks={d.overdue} running={running} />
           <Section title="Due today" tasks={d.dueToday} running={running} empty="Nothing due today." />
@@ -90,7 +91,7 @@ export default async function MyDayPage() {
         <aside className="space-y-4">
           <Card title="Today">
             <Meter value={d.loggedToday} max={d.dayHours} label="Time logged" sublabel={`${d.loggedToday}h of ${d.dayHours}h`} warnAt={2} />
-            <Link href="/app/time" className="mt-3 block text-sm text-brand hover:underline">Confirm today's timesheet →</Link>
+            <TextLink href="/app/time" className="mt-3">Confirm today's timesheet</TextLink>
           </Card>
           <Card title="Workload">
             <Meter value={d.openEstimate} max={d.dayHours * 5} label="Estimated work queued" sublabel={`${Math.round(d.openEstimate)}h vs ${d.dayHours * 5}h week`} />

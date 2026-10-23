@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SubmitButton } from "@/components/SubmitButton";
 import { signup } from "../auth-actions";
 import { AuthShell } from "@/components/AuthShell";
 import { Field, buttonClass } from "@/components/ui";
@@ -8,7 +9,7 @@ export const metadata = { title: "Start free" };
 
 export default function SignupPage() {
   return (
-    <AuthShell title="Set up your agency" footer={<>Already on 8gency? <Link className="text-brand hover:underline" href="/login">Log in</Link></>}>
+    <AuthShell title="Set up your agency" subtitle="Free to start. Your Agency Health Scan is ready as soon as your data is in." footer={<>Already on 8gency? <Link className="text-brand hover:underline" href="/login">Log in</Link></>}>
       <form action={signup} className="space-y-4">
         <Field label="Agency name">
           <input name="agencyName" required />
@@ -31,7 +32,7 @@ export default function SignupPage() {
         <Field label="Password">
           <input name="password" type="password" minLength={8} required />
         </Field>
-        <button className={buttonClass("primary") + " w-full"}>Create agency</button>
+        <SubmitButton className={buttonClass("primary") + " w-full"}>Create agency</SubmitButton>
         <p className="text-xs text-ink-3">South African VAT (15%) is preset. Confirm tax settings with your accountant.</p>
       </form>
     </AuthShell>

@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import { SubmitButton } from "@/components/SubmitButton";
 import { hubChangeDecisionAction } from "../../actions";
-import { Card, Money, StatusBadge, buttonClass } from "@/components/ui";
+import { Card, Money, StatusBadge, buttonClass, Field, BackLink } from "@/components/ui";
 import { asContact, resolveHubToken } from "@/lib/services/hub";
 import { getChangeRequest } from "@/lib/services/scope";
 
@@ -13,7 +13,7 @@ export default async function HubChange({ params }: { params: Promise<{ token: s
   if (!cr || cr.company_id !== contact.company_id) notFound();
   return (
     <div className="space-y-4">
-      <Link href={`/hub/${token}`} className="text-sm text-ink-3 hover:text-ink">← Everything</Link>
+      <BackLink href={`/hub/${token}`}>Everything</BackLink>
       <div className="flex items-center gap-2"><h1 className="text-xl font-semibold">Change request</h1><StatusBadge status={cr.status} /></div>
       <Card>
         <h2 className="font-semibold">{cr.title}</h2>
@@ -30,10 +30,10 @@ export default async function HubChange({ params }: { params: Promise<{ token: s
           <form action={hubChangeDecisionAction} className="space-y-3">
             <input type="hidden" name="token" value={token} />
             <input type="hidden" name="change_request_id" value={id} />
-            <textarea name="note" placeholder="Optional note" />
+            <Field label="Note (optional)"><textarea name="note" /></Field>
             <div className="flex gap-2">
-              <button name="decision" value="approved" className={buttonClass("primary")}>Approve and go ahead</button>
-              <button name="decision" value="declined" className={buttonClass("secondary")}>Decline</button>
+              <SubmitButton name="decision" value="approved" confirm={`Approve this change? It adds ${cr.estimate_hours} hours to the work and will be invoiced.`} className={buttonClass("primary")}>Approve and go ahead</SubmitButton>
+              <SubmitButton name="decision" value="declined" confirm="Decline this change request?" className={buttonClass("secondary")}>Decline</SubmitButton>
             </div>
           </form>
         </Card>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { SubmitButton } from "@/components/SubmitButton";
 import { absorbChangeRequestAction, recordDecisionAction, sendChangeRequestAction, updateChangeRequestAction } from "../../_actions/scope";
 import { Card, Field, Money, PageHeader, StatusBadge, buttonClass } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
@@ -35,7 +36,7 @@ export default async function ChangeRequestPage({ params }: { params: Promise<{ 
         title={<span className="flex items-center gap-2">{cr.title} <StatusBadge status={cr.status} /></span>}
         subtitle={<>{cr.company_name}{cr.job_number && <> · <Link className="hover:underline" href={`/app/jobs/${cr.job_id}?tab=scope`}>{cr.job_number}</Link></>} · origin: {cr.origin.replace("_", " ")}</>}
       />
-      <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-4">
           <Card title={draft ? "Price it" : "Details"}>
             {draft && can(user, "createChangeRequests") ? (
@@ -45,7 +46,7 @@ export default async function ChangeRequestPage({ params }: { params: Promise<{ 
                 <Field label="What it includes" className="sm:col-span-2"><textarea name="description" defaultValue={cr.description} /></Field>
                 <Field label="Estimated hours"><input name="estimate_hours" defaultValue={cr.estimate_hours} /></Field>
                 <Field label="Price (excl. VAT)" hint="Leave as is to price from the rate card."><input name="price" defaultValue={(cr.price_cents / 100).toFixed(2)} /></Field>
-                <div><button className={buttonClass("secondary", "sm")}>Save</button></div>
+                <div><SubmitButton className={buttonClass("secondary", "sm")}>Save</SubmitButton></div>
               </form>
             ) : (
               <dl className="grid grid-cols-2 gap-y-2 text-sm">
@@ -88,21 +89,21 @@ export default async function ChangeRequestPage({ params }: { params: Promise<{ 
                 {draft && (
                   <form action={sendChangeRequestAction}>
                     <input type="hidden" name="id" value={id} />
-                    <button className={buttonClass("primary") + " w-full"}>Send to client for approval</button>
+                    <SubmitButton className={buttonClass("primary") + " w-full"}>Send to client for approval</SubmitButton>
                   </form>
                 )}
                 <form action={absorbChangeRequestAction} className="space-y-2 border-t border-line pt-3">
                   <input type="hidden" name="id" value={id} />
-                  <input name="reason" placeholder="Why are we absorbing this?" required />
-                  <button className={buttonClass("secondary", "sm")}>Absorb as an investment</button>
+                  <Field label="Why are we absorbing this?"><input name="reason" required /></Field>
+                  <SubmitButton className={buttonClass("secondary", "sm")}>Absorb as an investment</SubmitButton>
                 </form>
                 <form action={recordDecisionAction} className="space-y-2 border-t border-line pt-3">
                   <input type="hidden" name="id" value={id} />
                   <p className="text-xs text-ink-3">Client agreed on a call or in a meeting?</p>
-                  <input name="approver_name" placeholder="Who agreed" defaultValue={data.approver?.name} />
+                  <Field label="Who agreed"><input name="approver_name" defaultValue={data.approver?.name} /></Field>
                   <div className="flex gap-2">
-                    <button name="decision" value="approved" className={buttonClass("secondary", "sm")}>Record approval</button>
-                    <button name="decision" value="declined" className={buttonClass("ghost", "sm")}>Record decline</button>
+                    <SubmitButton name="decision" value="approved" className={buttonClass("secondary", "sm")}>Record approval</SubmitButton>
+                    <SubmitButton name="decision" value="declined" className={buttonClass("ghost", "sm")}>Record decline</SubmitButton>
                   </div>
                 </form>
               </div>

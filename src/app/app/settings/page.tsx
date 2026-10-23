@@ -1,3 +1,5 @@
+import { CheckCircle } from "@phosphor-icons/react/ssr";
+import { SubmitButton } from "@/components/SubmitButton";
 import { addRateAction, addUserAction, deactivateUserAction, importAction, runAutomationsAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
 import { Badge, Card, Field, Money, PageHeader, Table, Tabs, Td, buttonClass } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
@@ -46,7 +48,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <Field label="Minimum brief score to start work"><input name="brief_threshold" defaultValue={data.agency.brief_threshold} /></Field>
             <Field label="Invoice within (days)" hint="Ready-to-bill items older than this are flagged."><input name="bill_within_days" defaultValue={data.agency.bill_within_days} /></Field>
             <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" name="ai_enabled" defaultChecked={data.agency.ai_enabled} /> 8gent AI drafting enabled (client data is never used for training; drafts always need human review)</label>
-            <div><button className={buttonClass("primary", "sm")}>Save</button></div>
+            <div><SubmitButton className={buttonClass("primary", "sm")}>Save</SubmitButton></div>
           </form>
         </Card>
       )}
@@ -65,13 +67,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <Field label="Company registration number"><input name="registration_number" defaultValue={data.entity.registration_number} /></Field>
             <Field label="Address" className="sm:col-span-2"><textarea name="address" defaultValue={data.entity.address} /></Field>
             <Field label="Bank details (printed on invoices)" className="sm:col-span-2"><textarea name="bank_details" defaultValue={data.entity.bank_details} /></Field>
-            <div><button className={buttonClass("primary", "sm")}>Save</button></div>
+            <div><SubmitButton className={buttonClass("primary", "sm")}>Save</SubmitButton></div>
           </form>
         </Card>
       )}
 
       {tab === "rates" && (
-        <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
           <Card pad={false}>
             <Table head={["Role", "Client override", "Rate / hour", "Effective from"]}>
               {data.rates.map((r) => <tr key={r.id}><Td>{r.role_title}</Td><Td className="text-ink-2">{r.company ?? "All clients"}</Td><Td right><Money cents={r.rate_cents} /></Td><Td className="text-ink-2">{formatDate(r.effective_from)}</Td></tr>)}
@@ -84,7 +86,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 <Field label="Client (optional override)"><select name="company_id" defaultValue=""><option value="">All clients</option>{data.companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
                 <Field label="Rate per hour (excl. VAT)"><input name="rate" required /></Field>
                 <Field label="Effective from"><input type="date" name="effective_from" /></Field>
-                <button className={buttonClass("primary", "sm")}>Add rate</button>
+                <SubmitButton className={buttonClass("primary", "sm")}>Add rate</SubmitButton>
                 <p className="text-xs text-ink-3">Rates never change history: each time entry keeps the rate in force on its date.</p>
               </form>
             </Card>
@@ -95,26 +97,42 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       {tab === "team" && (
         <div className="space-y-4">
           <Card pad={false}>
-            <Table head={["Person", `Role · title (sets rate) · hours/week · target %${costs ? " · cost/hour" : ""}`, ""]}>
-              {data.users.map((u) => (
-                <tr key={u.id} className={u.active ? "" : "opacity-50"}>
-                  <Td><b>{u.name}</b><div className="text-xs text-ink-3">{u.email}</div></Td>
-                  <Td>
+            <Table head={["Person", "Role", "Title (sets rate)", "Hours/wk", "Target %", ...(costs ? ["Cost/hour"] : []), ""]}>
+              {data.users.map((u) => {
+                // Controls sit in their own cells and join the row's form via the `form` attribute.
+                const f = `user-${u.id}`;
+                return (
+                  <tr key={u.id} className={u.active ? "" : "opacity-50"}>
+                    <Td><b>{u.name}</b><div className="text-xs text-ink-3">{u.email}</div></Td>
                     {u.active ? (
-                      <form action={updateUserAction} className="flex flex-wrap items-center gap-2">
-                        <input type="hidden" name="user_id" value={u.id} />
-                        <select name="role" defaultValue={u.role} className="!w-36">{Object.entries(ROLE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-                        <input name="title" defaultValue={u.title} list="roles2" className="!w-40" />
-                        <input name="weekly_hours" defaultValue={u.weekly_hours} className="!w-16" aria-label="Hours per week" />
-                        <input name="target_utilisation" defaultValue={Math.round(u.target_utilisation * 100)} className="!w-16" aria-label="Target utilisation %" />
-                        {costs ? <input name="cost_rate" defaultValue={(u.cost_rate_cents / 100).toFixed(2)} className="!w-24" aria-label="Cost per hour" /> : <input type="hidden" name="cost_rate" value={(u.cost_rate_cents / 100).toFixed(2)} />}
-                        <button className={buttonClass("ghost", "sm")}>Save</button>
-                      </form>
-                    ) : <Badge>Deactivated</Badge>}
-                  </Td>
-                  <Td>{u.active && u.id !== user.id && <form action={deactivateUserAction}><input type="hidden" name="user_id" value={u.id} /><button className={buttonClass("danger", "sm")}>Remove access</button></form>}</Td>
-                </tr>
-              ))}
+                      <>
+                        <Td><select form={f} name="role" aria-label={`Role for ${u.name}`} defaultValue={u.role} className="field-sm !w-40">{Object.entries(ROLE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Td>
+                        <Td><input form={f} name="title" aria-label={`Title for ${u.name}`} defaultValue={u.title} list="roles2" className="field-sm !w-48" /></Td>
+                        <Td><input form={f} name="weekly_hours" inputMode="decimal" defaultValue={u.weekly_hours} className="field-sm !w-16 text-right" aria-label={`Hours per week for ${u.name}`} /></Td>
+                        <Td><input form={f} name="target_utilisation" inputMode="numeric" defaultValue={Math.round(u.target_utilisation * 100)} className="field-sm !w-16 text-right" aria-label={`Target utilisation % for ${u.name}`} /></Td>
+                        {costs && <Td><input form={f} name="cost_rate" inputMode="decimal" defaultValue={(u.cost_rate_cents / 100).toFixed(2)} className="field-sm !w-24 text-right" aria-label={`Cost per hour for ${u.name}`} /></Td>}
+                        <Td>
+                          <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                            <form id={f} action={updateUserAction}>
+                              <input type="hidden" name="user_id" value={u.id} />
+                              {!costs && <input type="hidden" name="cost_rate" value={(u.cost_rate_cents / 100).toFixed(2)} />}
+                              <SubmitButton className={buttonClass("secondary", "sm")}>Save</SubmitButton>
+                            </form>
+                            {u.id !== user.id && (
+                              <form action={deactivateUserAction}>
+                                <input type="hidden" name="user_id" value={u.id} />
+                                <SubmitButton confirm={`Remove ${u.name}'s access? Their sessions and timers end today.`} className={buttonClass("danger", "sm")}>Remove</SubmitButton>
+                              </form>
+                            )}
+                          </div>
+                        </Td>
+                      </>
+                    ) : (
+                      <Td colSpan={costs ? 6 : 5}><Badge>Deactivated</Badge></Td>
+                    )}
+                  </tr>
+                );
+              })}
             </Table>
             <datalist id="roles2">{roleTitles.map((r) => <option key={r} value={r} />)}</datalist>
           </Card>
@@ -128,7 +146,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               <Field label="Hours per week"><input name="weekly_hours" defaultValue="40" /></Field>
               <Field label="Target utilisation %"><input name="target_utilisation" defaultValue="70" /></Field>
               {costs && <Field label="Cost per hour"><input name="cost_rate" /></Field>}
-              <div className="flex items-end"><button className={buttonClass("primary", "sm")}>Add</button></div>
+              <div className="flex items-end"><SubmitButton className={buttonClass("primary", "sm")}>Add</SubmitButton></div>
             </form>
             <p className="mt-2 text-xs text-ink-3">Removing access ends sessions and timers the same day (Rule 14).</p>
           </Card>
@@ -147,7 +165,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 </select>
               </Field>
               <Field label="CSV file"><input type="file" name="file" accept=".csv,text/csv" required /></Field>
-              <button className={buttonClass("primary", "sm")}>Import</button>
+              <SubmitButton className={buttonClass("primary", "sm")}>Import</SubmitButton>
             </form>
           </Card>
           <Card title="How mapping works">
@@ -176,9 +194,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               "New client → 30-, 60-, 90-day check-ins",
               "Contract renewal or end → reminders at 90, 60 and 30 days",
               "Retainer period opens → recurring job created from its template; annual price increase applied on the anniversary",
-            ].map((a) => <li key={a} className="flex gap-2"><span className="text-good">✓</span>{a}</li>)}
+            ].map((a) => <li key={a} className="flex gap-2"><CheckCircle aria-hidden size={16} weight="fill" className="mt-0.5 shrink-0 text-good-ink" />{a}</li>)}
           </ul>
-          <form action={runAutomationsAction} className="mt-4"><button className={buttonClass("secondary", "sm")}>Run now</button></form>
+          <form action={runAutomationsAction} className="mt-4"><SubmitButton className={buttonClass("secondary", "sm")}>Run now</SubmitButton></form>
           <p className="mt-2 text-xs text-ink-3">In production a scheduler calls <code>/api/cron</code> every 15 minutes. Every rule is idempotent.</p>
         </Card>
       )}

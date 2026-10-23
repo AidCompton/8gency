@@ -1,7 +1,8 @@
 import Link from "next/link";
+import { SubmitButton } from "@/components/SubmitButton";
 import { createInvoiceAction } from "../_actions/billing";
 import { lockTimeAction } from "../_actions/time";
-import { Badge, BarList, Card, Empty, Field, Money, PageHeader, StatusBadge, Table, Tabs, Td, buttonClass } from "@/components/ui";
+import { Badge, BarList, Card, Empty, Field, Money, PageHeader, StatusBadge, Table, Tabs, Td, buttonClass, StatusIcon, Stat } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { addDays, endOfMonth, formatShort, startOfMonth, todayIn } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
@@ -29,14 +30,16 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const byClient = new Map<string, typeof data.ready>();
   for (const i of data.ready) byClient.set(i.company_id, [...(byClient.get(i.company_id) ?? []), i]);
   const readyTotal = data.ready.reduce((s, i) => s + i.amount_cents, 0);
+  const overdueReady = data.ready.filter((r) => r.overdue).length;
+  const overdue = data.debt.open.filter((o) => o.daysOverdue > 0).reduce((s, o) => s + o.outstanding, 0);
   return (
     <>
       <PageHeader title="Billing" subtitle={`Rule 11: invoices go out within ${data.settings.bill_within_days} days of a milestone, month start or approval.`} />
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <div className="rounded-xl border border-line bg-surface p-4"><div className="text-xs uppercase tracking-wide text-ink-3">Ready to bill</div><div className="text-2xl font-semibold tnum"><Money cents={readyTotal} compact /></div><div className="text-xs text-ink-2">{data.ready.filter((r) => r.overdue).length} past the {data.settings.bill_within_days}-day limit</div></div>
-        <div className="rounded-xl border border-line bg-surface p-4"><div className="text-xs uppercase tracking-wide text-ink-3">Debtors</div><div className="text-2xl font-semibold tnum"><Money cents={data.debt.total} compact /></div></div>
-        <div className="rounded-xl border border-line bg-surface p-4"><div className="text-xs uppercase tracking-wide text-ink-3">Overdue</div><div className="text-2xl font-semibold tnum text-critical-ink"><Money cents={data.debt.open.filter((o) => o.daysOverdue > 0).reduce((s, o) => s + o.outstanding, 0)} compact /></div></div>
-        <div className="rounded-xl border border-line bg-surface p-4"><div className="text-xs uppercase tracking-wide text-ink-3">Time locked until</div><div className="text-2xl font-semibold">{formatShort(data.settings.time_locked_until)}</div></div>
+        <Stat label="Ready to bill" value={<Money cents={readyTotal} compact />} hint={`${overdueReady} past the ${data.settings.bill_within_days}-day limit`} tone={overdueReady ? "warning" : undefined} href="/app/billing?tab=ready" />
+        <Stat label="Debtors" value={<Money cents={data.debt.total} compact />} hint="Sent, not yet paid" href="/app/billing?tab=debtors" />
+        <Stat label="Overdue" value={<Money cents={overdue} compact />} hint={overdue ? "Past the due date" : "Nothing overdue"} tone={overdue ? "critical" : "good"} href="/app/billing?tab=debtors" />
+        <Stat label="Time locked until" value={formatShort(data.settings.time_locked_until)} hint="Month-end close" href="/app/billing?tab=close" />
       </div>
       <Tabs base="/app/billing" active={tab} tabs={[{ key: "ready", label: `Ready to bill · ${data.ready.length}` }, { key: "invoices", label: "Invoices" }, { key: "debtors", label: "Debtors" }, { key: "wip", label: "WIP" }, { key: "close", label: "Month-end close" }]} />
 
@@ -51,12 +54,12 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
                     <li key={i.key} className="flex items-center gap-3 py-2 text-sm">
                       <input type="checkbox" name="item" value={i.key} defaultChecked aria-label={i.description} />
                       <span className="min-w-0 flex-1 truncate">{i.description}{i.source_type === "time" && <span className="text-ink-3"> · {i.quantity}h</span>}</span>
-                      <span className={`text-xs ${i.overdue ? "text-critical-ink" : "text-ink-3"}`}>{i.overdue ? "● " : ""}waiting {i.age_days}d</span>
+                      <span className={`inline-flex items-center gap-1 text-xs ${i.overdue ? "text-critical-ink" : "text-ink-3"}`}>{i.overdue && <StatusIcon tone="critical" />}waiting {i.age_days}d</span>
                       <Money cents={i.amount_cents} />
                     </li>
                   ))}
                 </ul>
-                <div className="mt-3"><button className={buttonClass("primary", "sm")}>Draft invoice</button></div>
+                <div className="mt-3"><SubmitButton className={buttonClass("primary", "sm")}>Draft invoice</SubmitButton></div>
               </form>
             </Card>
           ))}
@@ -82,7 +85,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       )}
 
       {tab === "debtors" && (
-        <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+        <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
           <Card title="Debtors by age"><BarList rows={data.debt.buckets.map((b) => ({ label: b.bucket === "current" ? "Not yet due" : `${b.bucket} days`, value: b.cents, negative: b.bucket !== "current" }))} format={(v) => formatMoney(v, "ZAR", { compact: true })} /></Card>
           <Card pad={false}>
             <Table head={["Invoice", "Client", "Due", "Days over", "Reminders", "Outstanding"]} empty="No open invoices.">
@@ -126,14 +129,14 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
             <form action="/api/export/xero" method="get" className="flex flex-wrap items-end gap-2">
               <Field label="From"><input type="date" name="from" defaultValue={startOfMonth(lastMonthEnd)} /></Field>
               <Field label="To"><input type="date" name="to" defaultValue={endOfMonth(lastMonthEnd)} /></Field>
-              <button className={buttonClass("secondary", "sm")}>Download Xero invoice CSV</button>
+              <SubmitButton className={buttonClass("secondary", "sm")}>Download Xero invoice CSV</SubmitButton>
             </form>
             <p className="mt-2 text-xs text-ink-3">Column layout follows Xero's sales-invoice import template. Check account codes and tax types against your Xero organisation before importing.</p>
           </Card>
           <Card title="4. Lock time">
             <form action={lockTimeAction} className="flex flex-wrap items-end gap-2">
               <Field label="Lock all time up to"><input type="date" name="until" defaultValue={lastMonthEnd} /></Field>
-              <button className={buttonClass("primary", "sm")}>Lock</button>
+              <SubmitButton className={buttonClass("primary", "sm")}>Lock</SubmitButton>
             </form>
             <p className="mt-2 text-xs text-ink-3">Locked time can't be added or edited. The lock is recorded in the audit log.</p>
           </Card>

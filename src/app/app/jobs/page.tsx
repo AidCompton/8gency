@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Badge, Card, LinkButton, Meter, Money, PageHeader, StatusBadge, Table, Td } from "@/components/ui";
+import { Badge, Card, LinkButton, Meter, Money, PageHeader, StatusBadge, Table, Td, StatusIcon } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
 import { formatShort, todayIn } from "@/lib/domain/dates";
 import { can } from "@/lib/permissions";
@@ -44,7 +44,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 <Td className="text-ink-2">{j.company_name}</Td>
                 <Td><StatusBadge status={j.status} /></Td>
                 <Td className="text-ink-2">{j.owner_name ?? "—"}</Td>
-                <Td className={late ? "font-medium text-critical-ink" : "text-ink-2"}>{late && "● "}{formatShort(j.next_due ?? j.due_date)}</Td>
+                <Td className={late ? "font-medium text-critical-ink" : "text-ink-2"}><span className="inline-flex items-center gap-1">{late && <StatusIcon tone="critical" />}{formatShort(j.next_due ?? j.due_date)}{late && <span className="sr-only"> (late)</span>}</span></Td>
                 <Td className="w-48">{j.budget_hours > 0 ? <Meter value={j.hours_used} max={j.budget_hours} compact sublabel={`${Math.round(j.hours_used)}h / ${j.budget_hours}h`} label=" " /> : <span className="text-xs text-ink-3">{Math.round(j.hours_used)}h · no budget</span>}</Td>
                 {money && <Td right>{j.billing_model === "fixed" ? <Money cents={j.fee_cents} compact /> : <span className="text-xs uppercase text-ink-3">{j.billing_model}</span>}</Td>}
                 <Td>

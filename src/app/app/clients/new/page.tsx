@@ -1,3 +1,4 @@
+import { SubmitButton } from "@/components/SubmitButton";
 import { createClientAction } from "../../_actions/clients";
 import { Card, Field, PageHeader, buttonClass } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
@@ -20,7 +21,7 @@ export default async function NewClient() {
           <Field label="Payment terms (days)"><input name="payment_terms_days" defaultValue="30" /></Field>
           <Field label="Billing email"><input type="email" name="billing_email" /></Field>
           <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" name="po_required" /> Client requires a PO number on every invoice</label>
-          <div><button className={buttonClass("primary")}>Create client</button></div>
+          <div><SubmitButton className={buttonClass("primary")}>Create client</SubmitButton></div>
         </form>
       </Card>
     </>

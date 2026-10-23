@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { SubmitButton } from "@/components/SubmitButton";
 import { addFeedbackAction, internalDecisionAction, internalReviewAction, recordClientDecisionAction, sendToClientAction, uploadVersionAction } from "../../_actions/review";
 import { Proof } from "@/components/Proof";
-import { Badge, Card, Field, PageHeader, StatusBadge, buttonClass } from "@/components/ui";
+import { Badge, Card, Field, PageHeader, StatusBadge, buttonClass, StatusIcon, cx } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
 import { ageSince } from "@/lib/domain/dates";
 import { can } from "@/lib/permissions";
@@ -35,7 +36,7 @@ export default async function DeliverablePage({ params, searchParams }: { params
         title={<span className="flex flex-wrap items-center gap-2">{d.name} <StatusBadge status={d.status} /></span>}
         subtitle={<>{d.company_name} · {d.scope_name ? `Scope: ${d.scope_name}` : "Not linked to scope"} · Round {d.rounds_used} of {allowed}{approver ? ` · Approver: ${approver.name}` : ""}{d.status === "client_review" && d.sent_to_client_at ? ` · with client ${ageSince(d.sent_to_client_at)}` : ""}</>}
       />
-      <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-4">
           {current ? (
             <Card title={`Version ${current.number}${current.id !== latest.id ? " (not the latest)" : ""}`} actions={<span className="text-xs text-ink-3">{current.file_name}</span>}>
@@ -75,8 +76,8 @@ export default async function DeliverablePage({ params, searchParams }: { params
                 <input type="hidden" name="pin_x" />
                 <input type="hidden" name="pin_y" />
                 <input type="hidden" name="timecode" />
-                <textarea name="body" placeholder="Add an internal comment. Click the image first to pin it." required />
-                <button className={buttonClass("secondary", "sm")}>Comment</button>
+                <Field label="Internal comment" hint="Click the image first to pin it to a spot."><textarea name="body" required /></Field>
+                <SubmitButton className={buttonClass("secondary", "sm")}>Comment</SubmitButton>
               </form>
             </Card>
           )}
@@ -84,30 +85,30 @@ export default async function DeliverablePage({ params, searchParams }: { params
         <aside className="space-y-4">
           <Card title="Next step">
             {d.status === "approved" ? (
-              <p className="text-sm text-good-ink">✓ Approved. Final files live with the client's approved work.</p>
+              <p className="flex items-start gap-1.5 text-sm text-good-ink"><StatusIcon tone="good" /> Approved. Final files live with the client's approved work.</p>
             ) : (
               <div className="space-y-4">
                 {["draft", "changes_requested"].includes(d.status) && (
                   <form action={uploadVersionAction} className="space-y-2">
                     <input type="hidden" name="deliverable_id" value={id} />
                     <Field label="Upload a new version"><input type="file" name="file" required /></Field>
-                    <input name="notes" placeholder="What changed?" />
-                    <button className={buttonClass("secondary", "sm")}>Upload v{(latest?.number ?? 0) + 1}</button>
+                    <Field label="What changed?"><input name="notes" /></Field>
+                    <SubmitButton className={buttonClass("secondary", "sm")}>Upload v{(latest?.number ?? 0) + 1}</SubmitButton>
                   </form>
                 )}
                 {d.status === "draft" && latest && (
                   <form action={internalReviewAction}>
                     <input type="hidden" name="deliverable_id" value={id} />
-                    <button className={buttonClass("secondary", "sm")}>Request internal review</button>
+                    <SubmitButton className={buttonClass("secondary", "sm")}>Request internal review</SubmitButton>
                   </form>
                 )}
                 {d.status === "internal_review" && can(user, "approveInternal") && (
                   <form action={internalDecisionAction} className="space-y-2">
                     <input type="hidden" name="deliverable_id" value={id} />
-                    <textarea name="note" placeholder="Internal review notes (optional)" />
+                    <Field label="Review notes (optional)"><textarea name="note" /></Field>
                     <div className="flex gap-2">
-                      <button name="decision" value="approved" className={buttonClass("primary", "sm")}>Pass internal review</button>
-                      <button name="decision" value="changes_requested" className={buttonClass("danger", "sm")}>Needs changes</button>
+                      <SubmitButton name="decision" value="approved" className={buttonClass("primary", "sm")}>Pass internal review</SubmitButton>
+                      <SubmitButton name="decision" value="changes_requested" className={buttonClass("danger", "sm")}>Needs changes</SubmitButton>
                     </div>
                   </form>
                 )}
@@ -116,16 +117,16 @@ export default async function DeliverablePage({ params, searchParams }: { params
                     <input type="hidden" name="deliverable_id" value={id} />
                     <p className="text-sm">
                       Send v{latest.number} to {approver?.name ?? "the client approver"}.{" "}
-                      {roundsLeft > 0 ? <span className="text-ink-2">{roundsLeft} round(s) left in scope.</span> : <span className="font-medium text-warning-ink">▲ All {allowed} round(s) in scope are used.</span>}
+                      {roundsLeft > 0 ? <span className="text-ink-2">{roundsLeft} round(s) left in scope.</span> : <span className="font-medium text-warning-ink"><StatusIcon tone="warning" /> All {allowed} round(s) in scope are used.</span>}
                     </p>
                     {roundsLeft <= 0 && (
                       <div className="space-y-2 rounded-lg bg-warning/10 p-3 text-sm">
                         <label className="flex items-center gap-2"><input type="radio" name="rounds_choice" value="change_request" defaultChecked /> Raise a change request for the extra round</label>
                         <label className="flex items-center gap-2"><input type="radio" name="rounds_choice" value="absorb" /> Absorb it, with a reason:</label>
-                        <input name="absorb_reason" placeholder="e.g. Our error on v2" />
+                        <input name="absorb_reason" aria-label="Reason to absorb the extra round" placeholder="e.g. Our error on v2" />
                       </div>
                     )}
-                    <button className={buttonClass("primary", "sm")}>Send for client approval</button>
+                    <SubmitButton className={buttonClass("primary", "sm")}>Send for client approval</SubmitButton>
                     <p className="text-xs text-ink-3">The client gets a hub link by email and WhatsApp, and can reply APPROVE or CHANGES.</p>
                   </form>
                 )}
@@ -133,11 +134,11 @@ export default async function DeliverablePage({ params, searchParams }: { params
                   <form action={recordClientDecisionAction} className="space-y-2">
                     <input type="hidden" name="deliverable_id" value={id} />
                     <p className="text-sm text-ink-2">Client decided in a meeting or on a call? Record it.</p>
-                    <input name="approver_name" placeholder="Who decided" defaultValue={approver?.name} />
-                    <textarea name="note" placeholder="What they said" />
+                    <Field label="Who decided"><input name="approver_name" defaultValue={approver?.name} /></Field>
+                    <Field label="What they said"><textarea name="note" /></Field>
                     <div className="flex gap-2">
-                      <button name="decision" value="approved" className={buttonClass("secondary", "sm")}>Record approval</button>
-                      <button name="decision" value="changes_requested" className={buttonClass("ghost", "sm")}>Record changes</button>
+                      <SubmitButton name="decision" value="approved" className={buttonClass("secondary", "sm")}>Record approval</SubmitButton>
+                      <SubmitButton name="decision" value="changes_requested" className={buttonClass("ghost", "sm")}>Record changes</SubmitButton>
                     </div>
                   </form>
                 )}
@@ -149,7 +150,7 @@ export default async function DeliverablePage({ params, searchParams }: { params
               <ol className="space-y-2 text-sm">
                 {h.approvals.map((a) => (
                   <li key={a.id}>
-                    <span className={a.decision === "approved" ? "text-good-ink" : "text-critical-ink"}>{a.decision === "approved" ? "✓ Approved" : "● Changes requested"}</span>{" "}
+                    <span className={cx("inline-flex items-center gap-1 font-medium", a.decision === "approved" ? "text-good-ink" : "text-critical-ink")}>{a.decision === "approved" ? <><StatusIcon tone="good" /> Approved</> : <><StatusIcon tone="critical" /> Changes requested</>}</span>{" "}
                     v{a.version_number} · {a.stage} · <b>{a.approver_name}</b> via {a.channel}
                     <div className="text-xs text-ink-3">{new Date(a.created_at).toLocaleString("en-ZA")}</div>
                     {a.note && <div className="text-xs text-ink-2">“{a.note}”</div>}

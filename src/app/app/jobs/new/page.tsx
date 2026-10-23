@@ -1,3 +1,4 @@
+import { SubmitButton } from "@/components/SubmitButton";
 import { createJobAction } from "../../_actions/jobs";
 import { Card, Field, PageHeader, buttonClass } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
@@ -60,7 +61,7 @@ export default async function NewJob({ searchParams }: { searchParams: Promise<{
           <Field label="Start date"><input type="date" name="start_date" /></Field>
           <Field label="Due date"><input type="date" name="due_date" /></Field>
           <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" name="rush" /> Rush job (flags the disruption cost to planned work)</label>
-          <div className="sm:col-span-2"><button className={buttonClass("primary")}>Create job</button></div>
+          <div className="sm:col-span-2"><SubmitButton className={buttonClass("primary")}>Create job</SubmitButton></div>
         </form>
       </Card>
     </>

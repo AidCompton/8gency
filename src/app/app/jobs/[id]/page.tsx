@@ -4,10 +4,11 @@ import {
   addCostAction, addScopeItemAction, addTaskAction, closeJobAction, completeMilestoneAction, lockScopeAction, removeScopeItemAction,
   saveBriefAction, setJobStatusAction, setTaskStatusAction, signOffBriefAction, updateJobAction,
 } from "../../_actions/jobs";
+import { SubmitButton } from "@/components/SubmitButton";
 import { createDeliverableAction } from "../../_actions/review";
 import { createChangeRequestAction, logRequestAction } from "../../_actions/scope";
 import { logTimeAction, startTimerAction } from "../../_actions/time";
-import { Badge, Card, Empty, Field, Hours, Meter, Money, PageHeader, Pct, Stat, StatusBadge, Table, Tabs, Td, buttonClass } from "@/components/ui";
+import { Badge, Card, Empty, Field, Hours, Meter, Money, PageHeader, Pct, Stat, StatusBadge, Table, Tabs, Td, buttonClass, StatusIcon } from "@/components/ui";
 import { requireUser, tenant, type SessionUser } from "@/lib/auth";
 import type { Tx } from "@/lib/db";
 import { BRIEF_FIELDS } from "@/lib/domain/brief";
@@ -59,7 +60,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
           <form action={startTimerAction}>
             <input type="hidden" name="job_id" value={id} />
             <input type="hidden" name="back" value={base} />
-            <button className={buttonClass("secondary", "sm")}>▶ Start timer on job</button>
+            <SubmitButton className={buttonClass("secondary", "sm")}>▶ Start timer on job</SubmitButton>
           </form>
         }
       />
@@ -85,7 +86,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
         tabs={[
           { key: "overview", label: "Overview" },
           { key: "brief", label: `Brief · ${brief.score}` },
-          { key: "scope", label: `Scope${job.scope_locked_at ? " ✓" : ""}` },
+          { key: "scope", label: job.scope_locked_at ? <span className="inline-flex items-center gap-1">Scope <StatusIcon tone="good" /><span className="sr-only"> (locked)</span></span> : "Scope" },
           { key: "tasks", label: "Tasks" },
           { key: "review", label: "Review" },
           { key: "time", label: "Time" },
@@ -145,13 +146,13 @@ async function overviewTab(tx: Tx, job: Job, user: SessionUser) {
               </Field>
             )}
             {job.status === "briefing" && !job.scope_locked_at && job.billing_model !== "internal" && (
-              <p className="text-sm text-warning-ink">▲ Approve the scope baseline on the Scope tab before starting work.</p>
+              <p className="flex items-start gap-1.5 text-sm text-warning-ink"><StatusIcon tone="warning" /> Approve the scope baseline on the Scope tab before starting work.</p>
             )}
             <div className="flex flex-wrap gap-2">
               {nextStatuses[job.status].map((s) => (
-                <button key={s} name="status" value={s} className={buttonClass(s === "complete" ? "primary" : "secondary", "sm")}>
+                <SubmitButton key={s} name="status" value={s} className={buttonClass(s === "complete" ? "primary" : "secondary", "sm")}>
                   {s === "in_progress" ? (job.status === "briefing" ? "Start work" : "Back to in progress") : s === "waiting_client" ? "Waiting on client" : "Mark complete"}
-                </button>
+                </SubmitButton>
               ))}
             </div>
           </form>
@@ -166,7 +167,7 @@ async function overviewTab(tx: Tx, job: Job, user: SessionUser) {
             <Field label="On budget?"><select name="on_budget"><option value="yes">Yes</option><option value="no">No</option></select></Field>
             <Field label="Client rating"><select name="rating" defaultValue=""><option value="">—</option>{[5, 4, 3, 2, 1].map((n) => <option key={n}>{n}</option>)}</select></Field>
             <Field label="Lessons learned" className="sm:col-span-3"><textarea name="lessons" required /></Field>
-            <div><button className={buttonClass("primary", "sm")}>Close job</button></div>
+            <div><SubmitButton className={buttonClass("primary", "sm")}>Close job</SubmitButton></div>
           </form>
         </Card>
       )}
@@ -189,7 +190,7 @@ async function overviewTab(tx: Tx, job: Job, user: SessionUser) {
                     <form action={completeMilestoneAction}>
                       <input type="hidden" name="id" value={m.id} />
                       <input type="hidden" name="back" value={`/app/jobs/${job.id}`} />
-                      <button className={buttonClass("ghost", "sm")}>Mark reached</button>
+                      <SubmitButton className={buttonClass("ghost", "sm")}>Mark reached</SubmitButton>
                     </form>
                   )}
                 </span>
@@ -209,7 +210,7 @@ async function overviewTab(tx: Tx, job: Job, user: SessionUser) {
             <Field label="Budget hours"><input name="budget_hours" defaultValue={job.budget_hours} /></Field>
             <Field label="Fee (excl. VAT)"><input name="fee" defaultValue={(job.fee_cents / 100).toFixed(2)} /></Field>
             <label className="flex items-center gap-2"><input type="checkbox" name="rush" defaultChecked={job.rush} /> Rush</label>
-            <div className="sm:col-span-2"><button className={buttonClass("secondary", "sm")}>Save</button></div>
+            <div className="sm:col-span-2"><SubmitButton className={buttonClass("secondary", "sm")}>Save</SubmitButton></div>
           </form>
         </Card>
       )}
@@ -218,8 +219,8 @@ async function overviewTab(tx: Tx, job: Job, user: SessionUser) {
           <input type="hidden" name="company_id" value={job.company_id} />
           <input type="hidden" name="job_id" value={job.id} />
           <input type="hidden" name="back" value={`/app/jobs/${job.id}`} />
-          <textarea name="body" placeholder="What did they ask for? (call, meeting, WhatsApp…) It goes to triage, where Scope Guard checks it against scope." />
-          <button className={buttonClass("secondary", "sm")}>Send to triage</button>
+          <Field label="What did they ask for?" hint="Call, meeting, WhatsApp… It goes to triage, where Scope Guard checks it against scope."><textarea name="body" /></Field>
+          <SubmitButton className={buttonClass("secondary", "sm")}>Send to triage</SubmitButton>
         </form>
       </Card>
     </div>
@@ -233,7 +234,7 @@ async function briefTab(tx: Tx, job: Job) {
   const settings = await agencySettings(tx);
   const field = (k: string) => (brief?.[k] as string | null) ?? "";
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <Card title="Brief">
         <form action={saveBriefAction} className="grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="job_id" value={job.id} />
@@ -252,7 +253,7 @@ async function briefTab(tx: Tx, job: Job) {
           </Field>
           <Field label="Success measure"><input name="success_measure" defaultValue={field("success_measure")} /></Field>
           <Field label="References (brand kit, past work, research)" className="sm:col-span-2"><textarea name="references_text" defaultValue={field("references_text")} /></Field>
-          <div className="sm:col-span-2"><button className={buttonClass("primary", "sm")}>Save brief</button></div>
+          <div className="sm:col-span-2"><SubmitButton className={buttonClass("primary", "sm")}>Save brief</SubmitButton></div>
         </form>
       </Card>
       <div className="space-y-4">
@@ -270,17 +271,17 @@ async function briefTab(tx: Tx, job: Job) {
         </Card>
         <Card title="Sign-off">
           {brief?.signed_off_at ? (
-            <p className="text-sm">✓ Signed off by {brief.signed_off_by} on {formatDate(new Date(brief.signed_off_at).toISOString().slice(0, 10))}</p>
+            <p className="flex items-start gap-1.5 text-sm"><StatusIcon tone="good" /> Signed off by {brief.signed_off_by} on {formatDate(new Date(brief.signed_off_at).toISOString().slice(0, 10))}</p>
           ) : (
             <form action={signOffBriefAction}>
               <input type="hidden" name="job_id" value={job.id} />
-              <button className={buttonClass("secondary", "sm")}>Sign off internally</button>
+              <SubmitButton className={buttonClass("secondary", "sm")}>Sign off internally</SubmitButton>
             </form>
           )}
         </Card>
         <Card title="Fields">
           <ul className="space-y-1 text-sm">
-            {BRIEF_FIELDS.map((f) => <li key={f.key} className="flex justify-between"><span>{f.label}</span><span className={missing.some((m) => m.key === f.key) ? "text-warning-ink" : "text-good-ink"}>{missing.some((m) => m.key === f.key) ? "▲ missing" : "✓"}</span></li>)}
+            {BRIEF_FIELDS.map((f) => <li key={f.key} className="flex justify-between"><span>{f.label}</span><span className={missing.some((m) => m.key === f.key) ? "text-warning-ink" : "text-good-ink"}>{missing.some((m) => m.key === f.key) ? <span className="inline-flex items-center gap-1"><StatusIcon tone="warning" /> missing</span> : <><StatusIcon tone="good" /><span className="sr-only">complete</span></>}</span></li>)}
           </ul>
         </Card>
       </div>
@@ -298,9 +299,9 @@ async function scopeTab(tx: Tx, job: Job, user: SessionUser) {
   const locked = Boolean(job.scope_locked_at);
   const vague = items.flatMap((i) => findVagueScope(`${i.name} ${i.inclusions}`).map((v) => ({ item: i.name, ...v })));
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
       <Card title={locked ? `Scope baseline · approved ${formatDate(new Date(job.scope_locked_at!).toISOString().slice(0, 10))}` : "Scope baseline · draft"} actions={!locked && manage && items.length > 0 && (
-        <form action={lockScopeAction}><input type="hidden" name="job_id" value={job.id} /><button className={buttonClass("primary", "sm")}>Approve and lock baseline</button></form>
+        <form action={lockScopeAction}><input type="hidden" name="job_id" value={job.id} /><SubmitButton className={buttonClass("primary", "sm")}>Approve and lock baseline</SubmitButton></form>
       )}>
         {items.length ? (
           <ul className="space-y-4">
@@ -315,7 +316,7 @@ async function scopeTab(tx: Tx, job: Job, user: SessionUser) {
                     </div>
                   </div>
                   {!locked && manage && (
-                    <form action={removeScopeItemAction}><input type="hidden" name="id" value={i.id} /><input type="hidden" name="back" value={`/app/jobs/${job.id}?tab=scope`} /><button className={buttonClass("ghost", "sm")}>Remove</button></form>
+                    <form action={removeScopeItemAction}><input type="hidden" name="id" value={i.id} /><input type="hidden" name="back" value={`/app/jobs/${job.id}?tab=scope`} /><SubmitButton confirm="Remove this scope item?" className={buttonClass("ghost", "sm")}>Remove</SubmitButton></form>
                   )}
                 </div>
                 <div className="mt-2"><Meter value={i.used} max={i.quantity} compact label={i.unit === "hours" ? "Hours used" : "Deliverables created"} sublabel={`${i.used} / ${i.quantity}${i.meter.over ? ` · ${i.meter.over} over` : ""}`} /></div>
@@ -333,14 +334,14 @@ async function scopeTab(tx: Tx, job: Job, user: SessionUser) {
             <Field label="Rounds each"><input name="rounds_allowed" defaultValue="2" /></Field>
             <Field label="Inclusions" className="sm:col-span-3"><input name="inclusions" /></Field>
             <Field label="Exclusions" className="sm:col-span-4"><input name="exclusions" /></Field>
-            <div><button className={buttonClass("secondary", "sm")}>Add to scope</button></div>
+            <div><SubmitButton className={buttonClass("secondary", "sm")}>Add to scope</SubmitButton></div>
           </form>
         )}
         {locked && <p className="mt-4 text-xs text-ink-3">The baseline is locked. Scope grows only through approved change requests, which add items here automatically.</p>}
       </Card>
       <div className="space-y-4">
         {vague.length > 0 && (
-          <Card title="▲ Vague scope wording">
+          <Card title={<span className="inline-flex items-center gap-1.5"><StatusIcon tone="warning" /> Vague scope wording</span>}>
             <ul className="space-y-2 text-sm">{vague.map((v, i) => <li key={i}><b>“{v.phrase}”</b> in {v.item}: {v.suggestion}</li>)}</ul>
           </Card>
         )}
@@ -358,9 +359,9 @@ async function scopeTab(tx: Tx, job: Job, user: SessionUser) {
           {can(user, "createChangeRequests") && (
             <form action={createChangeRequestAction} className="mt-4 space-y-2 border-t border-line pt-3">
               <input type="hidden" name="job_id" value={job.id} />
-              <input name="title" placeholder="What's the extra work?" required />
-              <div className="grid grid-cols-2 gap-2"><input name="estimate_hours" placeholder="Hours" /><input name="price" placeholder="Price (blank = rate card)" /></div>
-              <button className={buttonClass("secondary", "sm")}>Draft change request</button>
+              <Field label="What's the extra work?"><input name="title" required /></Field>
+              <div className="grid grid-cols-2 gap-2"><Field label="Hours"><input name="estimate_hours" inputMode="decimal" /></Field><Field label="Price" hint="Blank = rate card"><input name="price" inputMode="decimal" /></Field></div>
+              <SubmitButton className={buttonClass("secondary", "sm")}>Draft change request</SubmitButton>
             </form>
           )}
         </Card>
@@ -387,7 +388,7 @@ async function tasksTab(tx: Tx, job: Job, user: SessionUser) {
           <tr key={t.id}>
             <Td className="max-w-[20rem]"><span className={t.status === "done" ? "text-ink-3 line-through" : ""}>{t.title}</span></Td>
             <Td className="text-ink-2">{t.assignee ?? "—"}</Td>
-            <Td>{t.out_of_scope ? <Badge tone={t.change_request_id ? "info" : "critical"}>{t.change_request_id ? "CR" : "● Out of scope"}</Badge> : <span className="text-xs text-ink-2">{t.scope ?? "—"}</span>}</Td>
+            <Td>{t.out_of_scope ? <Badge tone={t.change_request_id ? "info" : "critical"}>{t.change_request_id ? "CR" : "Out of scope"}</Badge> : <span className="text-xs text-ink-2">{t.scope ?? "—"}</span>}</Td>
             <Td className={t.due_date && t.due_date < today && t.status !== "done" ? "text-critical-ink" : "text-ink-2"}>{formatShort(t.due_date)}</Td>
             <Td right>{t.logged}h{t.estimate_hours ? ` / ${t.estimate_hours}h` : ""}</Td>
             <Td><StatusBadge status={t.status} /></Td>
@@ -396,7 +397,7 @@ async function tasksTab(tx: Tx, job: Job, user: SessionUser) {
                 <form action={setTaskStatusAction}>
                   <input type="hidden" name="task_id" value={t.id} />
                   <input type="hidden" name="back" value={`/app/jobs/${job.id}?tab=tasks`} />
-                  <button name="status" value="done" className={buttonClass("ghost", "sm")}>Done</button>
+                  <SubmitButton name="status" value="done" className={buttonClass("ghost", "sm")}>Done</SubmitButton>
                 </form>
               )}
             </Td>
@@ -411,7 +412,7 @@ async function tasksTab(tx: Tx, job: Job, user: SessionUser) {
           <Field label="Scope item" hint="Out-of-scope work must become a change request or be absorbed."><select name="scope_item_id" required defaultValue=""><option value="" disabled>Choose…</option>{scope.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}<option value="oos">⚑ Out of scope</option></select></Field>
           <Field label="Due"><input type="date" name="due_date" /></Field>
           <Field label="Estimate (h)"><input name="estimate_hours" /></Field>
-          <div><button className={buttonClass("secondary", "sm")}>Add task</button></div>
+          <div><SubmitButton className={buttonClass("secondary", "sm")}>Add task</SubmitButton></div>
         </form>
       )}
     </Card>
@@ -428,7 +429,7 @@ async function reviewTab(tx: Tx, job: Job) {
   const scope = await tx.q<{ id: string; name: string }>("select id, name from scope_items where job_id = $1 and unit = 'deliverable' order by created_at", [job.id]);
   const approvers = await tx.q<{ id: string; name: string }>("select id, name from contacts where company_id = $1 and role = 'approver' and active", [job.company_id]);
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
       <Card pad={false}>
         <Table head={["Deliverable", "Scope item", "Versions", "Rounds", "Status"]} empty="No deliverables yet.">
           {ds.map((d) => {
@@ -453,7 +454,7 @@ async function reviewTab(tx: Tx, job: Job) {
           <Field label="Client approver"><select name="approver_contact_id"><option value="">First approver on file</option>{approvers.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
           <Field label="Due"><input type="date" name="due_date" /></Field>
           <Field label="First version (optional)"><input type="file" name="file" /></Field>
-          <button className={buttonClass("primary", "sm")}>Create</button>
+          <SubmitButton className={buttonClass("primary", "sm")}>Create</SubmitButton>
         </form>
       </Card>
     </div>
@@ -470,7 +471,7 @@ async function timeTab(tx: Tx, job: Job, user: SessionUser) {
   const byPerson = await tx.q<{ name: string; hours: number }>("select u.name, sum(te.hours) as hours from time_entries te join users u on u.id = te.user_id where te.job_id = $1 group by u.name order by 2 desc", [job.id]);
   const money = can(user, "seeMargins");
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <Card pad={false}>
         <Table head={["Date", "Person", "Task", "Category", "Hours", ...(money ? ["Value"] : [])]} empty="No time logged yet.">
           {entries.map((e) => (
@@ -500,7 +501,7 @@ async function timeTab(tx: Tx, job: Job, user: SessionUser) {
             <Field label="Absorb reason"><input name="absorb_reason" /></Field>
             {job.status === "closed" && <Field label="Closed-job override reason"><input name="closed_job_override" required /></Field>}
             <Field label="Notes"><input name="notes" /></Field>
-            <button className={buttonClass("primary", "sm")}>Log time</button>
+            <SubmitButton className={buttonClass("primary", "sm")}>Log time</SubmitButton>
           </form>
         </Card>
         <Card title="By person">
@@ -554,7 +555,7 @@ async function moneyTab(tx: Tx, job: Job, user: SessionUser) {
               <Td>{c.description}</Td>
               <Td right><Money cents={c.amount_cents} visible={money} /></Td>
               <Td>{c.rebillable ? `+${Math.round(c.markup * 100)}%` : "No"}</Td>
-              <Td>{c.invoice_line_id ? "✓" : "—"}</Td>
+              <Td>{c.invoice_line_id ? <><StatusIcon tone="good" /><span className="sr-only">Invoiced</span></> : "—"}</Td>
             </tr>
           ))}
         </Table>
@@ -565,7 +566,7 @@ async function moneyTab(tx: Tx, job: Job, user: SessionUser) {
           <Field label="Amount (excl. VAT)"><input name="amount" required /></Field>
           <Field label="Markup %"><input name="markup" defaultValue="15" /></Field>
           <label className="flex items-end gap-2 pb-2"><input type="checkbox" name="rebillable" defaultChecked /> Re-bill</label>
-          <div><button className={buttonClass("secondary", "sm")}>Add cost</button></div>
+          <div><SubmitButton className={buttonClass("secondary", "sm")}>Add cost</SubmitButton></div>
         </form>
       </Card>
     </div>

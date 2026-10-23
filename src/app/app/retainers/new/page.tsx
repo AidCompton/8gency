@@ -1,3 +1,4 @@
+import { SubmitButton } from "@/components/SubmitButton";
 import { createRetainerAction } from "../../_actions/retainers";
 import { Card, Field, PageHeader, buttonClass } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
@@ -31,7 +32,7 @@ export default async function NewRetainer() {
           <Field label="Recurring monthly job"><select name="job_template_key" defaultValue="social_month"><option value="">None</option>{JOB_TEMPLATES.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}</select></Field>
           <Field label="Recurring job owner"><select name="job_owner_id" defaultValue={user.id}>{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></Field>
           <Field label="What's included each month" hint="One per line. “12 social posts”, “10h community management”." className="sm:col-span-2"><textarea name="deliverables" placeholder={"12 social posts\n1 monthly report\n10h community management"} /></Field>
-          <div><button className={buttonClass("primary")}>Create retainer</button></div>
+          <div><SubmitButton className={buttonClass("primary")}>Create retainer</SubmitButton></div>
         </form>
       </Card>
     </>

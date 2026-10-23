@@ -1,4 +1,4 @@
-import { Badge, Card, PageHeader } from "@/components/ui";
+import { Badge, Card, Empty, PageHeader, StatusBadge } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 
 
@@ -16,14 +16,18 @@ export default async function OutboxPage() {
     <>
       <PageHeader title="Outbox" subtitle="Every email and WhatsApp message 8gency sends to clients. Connect an email provider and the WhatsApp Business Platform to deliver them; until then they queue here." />
       <div className="space-y-3">
+        {rows.length === 0 && <Empty>Nothing has been sent yet. Invoices, approvals and reminders queue here.</Empty>}
         {rows.map((m) => (
           <Card key={m.id}>
             <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-              <span><Badge tone={m.channel === "whatsapp" ? "good" : "info"}>{m.channel}</Badge> <b>{m.to_name}</b> <span className="text-ink-3">&lt;{m.to_address}&gt;</span></span>
-              <span className="text-xs text-ink-3">{m.status} · {new Date(m.created_at).toLocaleString("en-ZA")}</span>
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <Badge tone={m.channel === "whatsapp" ? "good" : "info"}>{m.channel === "whatsapp" ? "WhatsApp" : "Email"}</Badge>
+                <b>{m.to_name}</b> <span className="wrap-anywhere text-ink-3">&lt;{m.to_address}&gt;</span>
+              </span>
+              <span className="flex items-center gap-2 text-xs text-ink-3"><StatusBadge status={m.status} /> {new Date(m.created_at).toLocaleString("en-ZA")}</span>
             </div>
             {m.subject && <div className="mt-2 font-medium">{m.subject}</div>}
-            <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-ink-2">{m.body}</pre>
+            <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-ink-2 wrap-anywhere">{m.body}</pre>
           </Card>
         ))}
       </div>

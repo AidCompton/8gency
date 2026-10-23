@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SubmitButton } from "@/components/SubmitButton";
 import { markNotificationsReadAction } from "../_actions/settings";
 import { Card, Empty, PageHeader, buttonClass } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
@@ -16,7 +17,7 @@ export default async function Notifications() {
   return (
     <>
       <PageHeader title="Inbox" subtitle="Alerts and digests for you. Urgent items first; everything else batches here." actions={
-        <form action={markNotificationsReadAction}><button className={buttonClass("secondary", "sm")}>Mark all read</button></form>
+        <form action={markNotificationsReadAction}><SubmitButton className={buttonClass("secondary", "sm")}>Mark all read</SubmitButton></form>
       } />
       <Card pad={false}>
         {items.length ? (
@@ -31,7 +32,7 @@ export default async function Notifications() {
                 {!n.read_at && (
                   <form action={markNotificationsReadAction}>
                     <input type="hidden" name="id" value={n.id} />
-                    <button className={buttonClass("ghost", "sm")}>Read</button>
+                    <SubmitButton className={buttonClass("ghost", "sm")}>Read</SubmitButton>
                   </form>
                 )}
               </li>

@@ -1,7 +1,9 @@
+import { ArrowSquareOut } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { SubmitButton } from "@/components/SubmitButton";
 import { addContactAction, addContractAction, revokeContactAction, sendHubLinkAction, sendStatusReportAction, toggleOnboardingAction, updateClientAction } from "../../_actions/clients";
-import { Badge, Card, Empty, Field, HealthBadge, LinkButton, Meter, Money, PageHeader, SourceNote, StatusBadge, Table, Tabs, Td, buttonClass } from "@/components/ui";
+import { Badge, Card, Empty, Field, HealthBadge, LinkButton, Meter, Money, PageHeader, SourceNote, StatusBadge, Table, Tabs, Td, buttonClass, TextLink, StatusIcon } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatDate } from "@/lib/domain/dates";
 import { can } from "@/lib/permissions";
@@ -71,9 +73,9 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                     </div>
                     {p.active && can(user, "manageJobs") && (
                       <div className="flex gap-2">
-                        {p.hub_token && <a className={buttonClass("ghost", "sm")} href={appUrl(`/hub/${p.hub_token}`)} target="_blank">Open hub ↗</a>}
-                        <form action={sendHubLinkAction}><input type="hidden" name="company_id" value={id} /><input type="hidden" name="contact_id" value={p.id} /><button className={buttonClass("secondary", "sm")}>Send hub link</button></form>
-                        <form action={revokeContactAction}><input type="hidden" name="company_id" value={id} /><input type="hidden" name="contact_id" value={p.id} /><button className={buttonClass("danger", "sm")}>Revoke</button></form>
+                        {p.hub_token && <a className={buttonClass("ghost", "sm")} href={appUrl(`/hub/${p.hub_token}`)} target="_blank" rel="noopener">Open hub <ArrowSquareOut aria-hidden size={14} /><span className="sr-only"> (opens in a new tab)</span></a>}
+                        <form action={sendHubLinkAction}><input type="hidden" name="company_id" value={id} /><input type="hidden" name="contact_id" value={p.id} /><SubmitButton className={buttonClass("secondary", "sm")}>Send hub link</SubmitButton></form>
+                        <form action={revokeContactAction}><input type="hidden" name="company_id" value={id} /><input type="hidden" name="contact_id" value={p.id} /><SubmitButton className={buttonClass("danger", "sm")}>Revoke</SubmitButton></form>
                       </div>
                     )}
                   </li>
@@ -81,13 +83,13 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
               </ul>
             ) : <Empty>No contacts yet. Add at least one approver before anything goes to review.</Empty>}
             {can(user, "manageJobs") && (
-              <form action={addContactAction} className="mt-4 grid gap-2 border-t border-line pt-4 sm:grid-cols-5">
+              <form action={addContactAction} className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-2">
                 <input type="hidden" name="company_id" value={id} />
-                <input name="name" placeholder="Name" required />
-                <input name="email" type="email" placeholder="Email" />
-                <input name="phone" placeholder="WhatsApp number" />
-                <select name="role" defaultValue="approver"><option value="approver">Approver</option><option value="commenter">Commenter</option><option value="billing">Billing</option><option value="legal">Legal</option></select>
-                <button className={buttonClass("secondary", "sm")}>Add contact</button>
+                <Field label="Name"><input name="name" required /></Field>
+                <Field label="Email"><input name="email" type="email" /></Field>
+                <Field label="WhatsApp"><input name="phone" type="tel" /></Field>
+                <Field label="Role"><select name="role" defaultValue="approver"><option value="approver">Approver</option><option value="commenter">Commenter</option><option value="billing">Billing</option><option value="legal">Legal</option></select></Field>
+                <SubmitButton className={buttonClass("secondary", "sm") + " justify-self-start sm:col-span-2"}>Add contact</SubmitButton>
               </form>
             )}
           </Card>
@@ -104,9 +106,9 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
             ) : <p className="text-sm text-ink-3">Not enough history yet.</p>}
             {data.prof && (
               <div className="mt-4 border-t border-line pt-3 text-sm">
-                <div className="flex justify-between"><span className="text-ink-2">Revenue, 90 days</span><Money cents={data.prof.revenue} /></div>
-                <div className="flex justify-between"><span className="text-ink-2">Margin</span><span className="tnum">{data.prof.margin === null ? "—" : `${Math.round(data.prof.margin * 100)}%`}</span></div>
-                <div className="flex justify-between"><span className="text-ink-2">Effective hourly rate</span><Money cents={data.prof.ehr} /></div>
+                <div className="flex justify-between gap-3"><span className="text-ink-2">Revenue, 90 days</span><Money cents={data.prof.revenue} /></div>
+                <div className="flex justify-between gap-3"><span className="text-ink-2">Margin</span><span className="tnum">{data.prof.margin === null ? "—" : `${Math.round(data.prof.margin * 100)}%`}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-ink-2">Effective hourly rate</span><Money cents={data.prof.ehr} /></div>
               </div>
             )}
           </Card>
@@ -121,7 +123,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
             {data.retainers.map((r) => (
               <Card key={r.retainer.id} title={r.retainer.name}>
                 <Meter value={r.usedHours} max={r.allocated} label="This month" sublabel={`${r.usedHours}h / ${r.allocated}h`} marker={r.burn?.elapsed} markerLabel="month elapsed" />
-                <Link className="mt-2 block text-sm text-brand hover:underline" href={`/app/retainers/${r.retainer.id}`}>Retainer →</Link>
+                <TextLink className="mt-2" href={`/app/retainers/${r.retainer.id}`}>Retainer</TextLink>
               </Card>
             ))}
             <Card title="Scope-change log">
@@ -150,7 +152,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                   <div className={i.done_at ? "text-ink-3 line-through" : ""}>{i.label}</div>
                   <div className="text-xs text-ink-3">{i.client_facing ? "Client completes via hub" : "Internal"}{i.done_at ? ` · done by ${i.done_by}` : ""}</div>
                 </div>
-                <form action={toggleOnboardingAction}><input type="hidden" name="company_id" value={id} /><input type="hidden" name="item_id" value={i.id} /><button className={buttonClass(i.done_at ? "ghost" : "secondary", "sm")}>{i.done_at ? "Undo" : "Mark done"}</button></form>
+                <form action={toggleOnboardingAction}><input type="hidden" name="company_id" value={id} /><input type="hidden" name="item_id" value={i.id} /><SubmitButton className={buttonClass(i.done_at ? "ghost" : "secondary", "sm")}>{i.done_at ? "Undo" : "Mark done"}</SubmitButton></form>
               </li>
             ))}
           </ul>
@@ -159,7 +161,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
       )}
 
       {tab === "contracts" && (
-        <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
           <Card pad={false}>
             <Table head={["Contract", "Term", "Renewal / notice", "Signed"]} empty="No contracts on file.">
               {data.contracts.map((k) => (
@@ -167,7 +169,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                   <Td><b>{k.title}</b> <Badge>{k.kind.toUpperCase()}</Badge>{k.supersedes_id && <Badge tone="info">amendment</Badge>}{k.ip_terms && <div className="text-xs text-ink-2">IP: {k.ip_terms}</div>}</Td>
                   <Td className="text-ink-2">{formatDate(k.starts_on)} – {formatDate(k.ends_on)}</Td>
                   <Td className="text-ink-2">{formatDate(k.renewal_on)} · {k.notice_days}d notice</Td>
-                  <Td>{k.signed_at ? <span className="text-good-ink">✓ {k.signed_by}</span> : <Badge tone="warning">unsigned</Badge>}</Td>
+                  <Td>{k.signed_at ? <span className="inline-flex items-center gap-1 text-good-ink"><StatusIcon tone="good" /> Signed · {k.signed_by}</span> : <Badge tone="warning">unsigned</Badge>}</Td>
                 </tr>
               ))}
             </Table>
@@ -175,15 +177,15 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
           <Card title="Record a contract">
             <form action={addContractAction} className="space-y-2">
               <input type="hidden" name="company_id" value={id} />
-              <input name="title" placeholder="e.g. Master services agreement 2026" required />
-              <select name="kind"><option value="msa">MSA</option><option value="sow">SOW</option><option value="nda">NDA</option><option value="other">Other</option></select>
+              <Field label="Title"><input name="title" placeholder="e.g. Master services agreement 2026" required /></Field>
+              <Field label="Type"><select name="kind"><option value="msa">MSA</option><option value="sow">SOW</option><option value="nda">NDA</option><option value="other">Other</option></select></Field>
               <div className="grid grid-cols-2 gap-2"><Field label="Starts"><input type="date" name="starts_on" /></Field><Field label="Ends"><input type="date" name="ends_on" /></Field></div>
               <div className="grid grid-cols-2 gap-2"><Field label="Renewal"><input type="date" name="renewal_on" /></Field><Field label="Notice days"><input name="notice_days" defaultValue="30" /></Field></div>
               <Field label="IP and ownership terms"><input name="ip_terms" /></Field>
               <Field label="Amends (signed contracts are never edited)"><select name="supersedes_id" defaultValue=""><option value="">—</option>{data.contracts.filter((k) => k.signed_at).map((k) => <option key={k.id} value={k.id}>{k.title}</option>)}</select></Field>
               <label className="flex items-center gap-2"><input type="checkbox" name="signed" /> Signed</label>
-              <input name="signed_by" placeholder="Signed by" />
-              <button className={buttonClass("secondary", "sm")}>Save</button>
+              <Field label="Signed by"><input name="signed_by" /></Field>
+              <SubmitButton className={buttonClass("secondary", "sm")}>Save</SubmitButton>
               <p className="text-xs text-ink-3">Renewals and end dates trigger reminders 90, 60 and 30 days ahead.</p>
             </form>
           </Card>
@@ -194,9 +196,9 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
         <Card title="Weekly status update" className="max-w-3xl">
           <form action={sendStatusReportAction} className="space-y-3">
             <input type="hidden" name="company_id" value={id} />
-            <textarea name="body" defaultValue={data.draft.text} className="min-h-[360px] font-mono text-sm" />
+            <textarea name="body" aria-label="Status update" defaultValue={data.draft.text} className="min-h-[360px] font-mono text-sm" />
             <SourceNote sources={data.draft.sources} by={data.draft.generatedBy} />
-            {can(user, "sendChangeRequests") && <button className={buttonClass("primary", "sm")}>Send to client contacts</button>}
+            {can(user, "sendChangeRequests") && <SubmitButton className={buttonClass("primary", "sm")}>Send to client contacts</SubmitButton>}
           </form>
         </Card>
       )}
@@ -213,7 +215,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
             <Field label="Billing email"><input name="billing_email" defaultValue={c.billing_email} /></Field>
             <Field label="Satisfaction (1–5, latest)"><input name="satisfaction" defaultValue={c.satisfaction ?? ""} /></Field>
             <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" name="po_required" defaultChecked={c.po_required} /> Requires a PO number on invoices</label>
-            <div><button className={buttonClass("secondary", "sm")}>Save</button></div>
+            <div><SubmitButton className={buttonClass("secondary", "sm")}>Save</SubmitButton></div>
           </form>
           <p className="mt-4 text-xs text-ink-3">Marking a client “former” doesn’t revoke hub links. Revoke each contact on the overview tab the day they leave.</p>
         </Card>

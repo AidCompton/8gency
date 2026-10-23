@@ -1,8 +1,9 @@
-import Link from "next/link";
+import { CheckCircle } from "@phosphor-icons/react/ssr";
 import { notFound } from "next/navigation";
+import { SubmitButton } from "@/components/SubmitButton";
 import { hubCommentAction, hubDecisionAction } from "../../actions";
 import { Proof } from "@/components/Proof";
-import { Card, StatusBadge, buttonClass } from "@/components/ui";
+import { Card, StatusBadge, buttonClass, Field, BackLink } from "@/components/ui";
 import { ageSince } from "@/lib/domain/dates";
 import { asContact, resolveHubToken } from "@/lib/services/hub";
 import { deliverableHistory, getDeliverable } from "@/lib/services/review";
@@ -23,7 +24,7 @@ export default async function HubReview({ params }: { params: Promise<{ token: s
   const canDecide = d.status === "client_review" && contact.role === "approver";
   return (
     <div className="space-y-4">
-      <Link href={`/hub/${token}`} className="text-sm text-ink-3 hover:text-ink">← Everything</Link>
+      <BackLink href={`/hub/${token}`}>Everything</BackLink>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">{d.name}</h1>
         <StatusBadge status={d.status} />
@@ -40,10 +41,10 @@ export default async function HubReview({ params }: { params: Promise<{ token: s
             <input type="hidden" name="token" value={token} />
             <input type="hidden" name="deliverable_id" value={id} />
             <input type="hidden" name="version_id" value={v.id} />
-            <textarea name="note" placeholder="Anything to add? Required if you'd like changes." />
+            <Field label="Note" hint="Optional when approving. Required if you'd like changes."><textarea name="note" required /></Field>
             <div className="flex flex-wrap gap-2">
-              <button name="decision" value="approved" className={buttonClass("primary")}>✓ Approve version {v.number}</button>
-              <button name="decision" value="changes_requested" className={buttonClass("secondary")}>Request changes</button>
+              <SubmitButton name="decision" value="approved" formNoValidate confirm={`Approve version ${v.number}? This is recorded as your sign-off.`} className={buttonClass("primary")}><CheckCircle aria-hidden size={16} weight="bold" /> Approve version {v.number}</SubmitButton>
+              <SubmitButton name="decision" value="changes_requested" className={buttonClass("secondary")}>Request changes</SubmitButton>
             </div>
             <p className="text-xs text-ink-3">Your approval is recorded with your name, the version, the time and this channel.</p>
           </form>
@@ -63,8 +64,8 @@ export default async function HubReview({ params }: { params: Promise<{ token: s
               <input type="hidden" name="pin_x" />
               <input type="hidden" name="pin_y" />
               <input type="hidden" name="timecode" />
-              <textarea name="body" required placeholder="Comment" />
-              <button className={buttonClass("secondary", "sm")}>Add comment</button>
+              <Field label="Comment"><textarea name="body" required /></Field>
+              <SubmitButton className={buttonClass("secondary", "sm")}>Add comment</SubmitButton>
             </form>
           )}
         </Card>
