@@ -1,5 +1,6 @@
 import type { Tx } from "../db";
 import { todayIn } from "../domain/dates";
+import { syncUnbilledTime, unbillTimeEntry } from "./billing";
 import { agencySettings, rateFor, recordActivity, UserError } from "./core";
 import { createChangeRequest } from "./scope";
 
@@ -39,8 +40,8 @@ export async function logTime(tx: Tx, userId: string, input: LogTimeInput) {
   if (settings.time_locked_until && input.work_date <= settings.time_locked_until) {
     throw new UserError(`Time up to ${settings.time_locked_until} is locked after month-end close.`);
   }
-  const job = await tx.one<{ id: string; status: string; company_id: string; retainer_id: string | null; billing_model: string; name: string }>(
-    "select id, status, company_id, retainer_id, billing_model, name from jobs where id = $1",
+  const job = await tx.one<{ id: string; status: string; company_id: string; retainer_id: string | null; billing_model: string; name: string; bill_time: boolean }>(
+    "select id, status, company_id, retainer_id, billing_model, name, bill_time from jobs where id = $1",
     [input.job_id],
   );
   if (!job) throw new UserError("Pick a job. All time sits on a job.");
@@ -116,14 +117,18 @@ export async function logTime(tx: Tx, userId: string, input: LogTimeInput) {
     ],
   );
   if (task) await tx.q("update tasks set last_activity_at = now() where id = $1", [task.id]);
+  // Billable time goes straight onto the client's next invoice.
+  if (job.bill_time) await syncUnbilledTime(tx, job.company_id);
   return row!.id;
 }
 
 export async function deleteTimeEntry(tx: Tx, userId: string, id: string) {
-  const e = await tx.one<{ user_id: string; locked: boolean; invoice_line_id: string | null }>("select user_id, locked, invoice_line_id from time_entries where id = $1", [id]);
+  const e = await tx.one<{ user_id: string; locked: boolean; invoice_line_id: string | null; hours: number }>("select user_id, locked, invoice_line_id, hours from time_entries where id = $1", [id]);
   if (!e) return;
   if (e.user_id !== userId) throw new UserError("You can only remove your own time.");
-  if (e.locked || e.invoice_line_id) throw new UserError("This entry is locked or already billed.");
+  if (e.locked) throw new UserError("This entry is locked after month-end close or invoicing.");
+  // On a draft invoice: take the hours off it. On an issued one: refused inside.
+  if (e.invoice_line_id) await unbillTimeEntry(tx, { hours: e.hours, invoice_line_id: e.invoice_line_id });
   await tx.q("delete from time_entries where id = $1", [id]);
 }
 
@@ -261,10 +266,13 @@ export async function weekEntries(tx: Tx, userId: string, from: string, to: stri
   return tx.q<{
     id: string; work_date: string; hours: number; category: string; notes: string; job_id: string; job_number: string; job_name: string;
     task_title: string | null; out_of_scope: boolean; oos_resolution: string | null; locked: boolean; source: string; invoice_line_id: string | null;
+    /** Status of the invoice this time is on, if any ("draft" = the client's next invoice). */
+    invoice_status: string | null;
   }>(
     `select te.id, te.work_date, te.hours, te.category, te.notes, te.job_id, j.number as job_number, j.name as job_name,
-            t.title as task_title, te.out_of_scope, te.oos_resolution, te.locked, te.source, te.invoice_line_id
+            t.title as task_title, te.out_of_scope, te.oos_resolution, te.locked, te.source, te.invoice_line_id, i.status as invoice_status
        from time_entries te join jobs j on j.id = te.job_id left join tasks t on t.id = te.task_id
+       left join invoice_lines l on l.id = te.invoice_line_id left join invoices i on i.id = l.invoice_id
       where te.user_id = $1 and te.work_date between $2 and $3
       order by te.work_date, te.created_at`,
     [userId, from, to],

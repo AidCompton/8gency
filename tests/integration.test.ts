@@ -7,13 +7,13 @@ import { after, before, describe, test } from "node:test";
 import { adminQuery, closePools, withAdminTx, withTenant, type Tx } from "../src/lib/db";
 import { addDays, todayIn } from "../src/lib/domain/dates";
 import { addContact, createAgencyWithOwner, createCompany, setAgencyLogo } from "../src/lib/services/agency";
-import { createInvoice, readyToBill, saveDraftInvoice, sendInvoice, type DraftInvoiceEdit } from "../src/lib/services/billing";
+import { createInvoice, readyToBill, saveDraftInvoice, sendInvoice, syncUnbilledTime, type DraftInvoiceEdit } from "../src/lib/services/billing";
 import { processInbound } from "../src/lib/services/inbound";
-import { addTask, createJob, lockScope, setJobStatus } from "../src/lib/services/jobs";
+import { addTask, createJob, lockScope, setJobBillTime, setJobStatus } from "../src/lib/services/jobs";
 import { createRetainer, reconcilePeriod } from "../src/lib/services/retainers";
 import { clientDecision, createDeliverable, sendToClient, uploadVersion } from "../src/lib/services/review";
 import { decideChangeRequest, submitClientRequest } from "../src/lib/services/scope";
-import { logTime, startTimer, stopTimer, timesheetSuggestions } from "../src/lib/services/time";
+import { deleteTimeEntry, logTime, startTimer, stopTimer, timesheetSuggestions } from "../src/lib/services/time";
 
 const run = randomUUID().slice(0, 8);
 let A: { agencyId: string; userId: string };
@@ -204,6 +204,91 @@ describe("operating rules", () => {
       await sendInvoice(tx, inv);
       assert.equal((await tx.one<{ due_date: string }>("select due_date::text from invoices where id = $1", [inv]))!.due_date, due, "a due date set on the draft is kept");
       await assert.rejects(saveDraftInvoice(tx, inv, edit(kept)), /Only draft invoices/);
+    });
+  });
+
+  test("billable time goes onto the client's next invoice by itself, itemised by task and rate", async () => {
+    await asA(async (tx) => {
+      const companyId = await createCompany(tx, { name: `Time ${run}` });
+      const drafts = () => tx.q<{ id: string }>("select id from invoices where company_id = $1 and status = 'draft'", [companyId]);
+      const timeLines = (inv: string) =>
+        tx.q<{ id: string; description: string; quantity: number; unit_cents: number; task_id: string | null; job_id: string }>(
+          "select id, description, quantity, unit_cents, task_id, job_id from invoice_lines where invoice_id = $1 and source_type = 'time' order by sort",
+          [inv],
+        );
+      const day = addDays(todayIn(), -1);
+
+      // Hourly job: billed by default. Two tasks → two itemised lines on a draft nobody had to create.
+      const tm = await createJob(tx, { company_id: companyId, name: "Hourly work", template_key: "design", billing_model: "tm" });
+      const [t1, t2] = await tx.q<{ id: string; title: string }>("select id, title from tasks where job_id = $1 order by title limit 2", [tm]);
+      const e1 = await logTime(tx, A.userId, { job_id: tm, task_id: t1.id, work_date: day, hours: 2, notes: "Homepage hero concepts" });
+      await logTime(tx, A.userId, { job_id: tm, task_id: t2.id, work_date: day, hours: 1.5 });
+      const [draft] = await drafts();
+      assert.ok(draft, "a draft was started automatically");
+      let lines = await timeLines(draft.id);
+      assert.equal(lines.length, 2);
+      const l1 = lines.find((l) => l.task_id === t1.id)!;
+      assert.equal(Number(l1.quantity), 2);
+      assert.ok(l1.unit_cents > 0, "billed at the rate card rate");
+      assert.ok(l1.description.includes(t1.title), "the line says which task the time was for");
+
+      // More time on the same task tops up the same line; deleting an entry takes it off again.
+      const e3 = await logTime(tx, A.userId, { job_id: tm, task_id: t1.id, work_date: day, hours: 1, notes: "Mobile layout" });
+      lines = await timeLines(draft.id);
+      assert.equal(lines.length, 2);
+      assert.equal(Number(lines.find((l) => l.task_id === t1.id)!.quantity), 3);
+      assert.match(lines.find((l) => l.task_id === t1.id)!.description, / — Homepage hero concepts; Mobile layout$/, "time notes say what was done");
+      await deleteTimeEntry(tx, A.userId, e3);
+      assert.equal(Number((await timeLines(draft.id)).find((l) => l.task_id === t1.id)!.quantity), 2);
+
+      // Fixed-fee job: time is tracked but not billed, until the job is switched on.
+      const fixed = await createJob(tx, { company_id: companyId, name: "Fixed work", template_key: "design", billing_model: "fixed", fee_cents: 50_000_00 });
+      const fe = await logTime(tx, A.userId, { job_id: fixed, work_date: day, hours: 4 });
+      assert.equal((await timeLines(draft.id)).length, 2, "fixed-fee time stays off the invoice");
+      await setJobBillTime(tx, fixed, "from_today");
+      assert.equal((await timeLines(draft.id)).length, 2, "'from today' leaves yesterday's time alone");
+      await setJobBillTime(tx, fixed, "all");
+      lines = await timeLines(draft.id);
+      assert.equal(lines.length, 3, "'all' sweeps up time already logged");
+
+      // Removing a time line from the draft means "don't charge it": it doesn't come back.
+      const keep = lines.filter((l) => l.job_id !== fixed);
+      await saveDraftInvoice(tx, draft.id, { lines: keep, po_number: "", notes: "", due_date: null, tax_rate: 0.15, exchange_rate: 1 });
+      await syncUnbilledTime(tx, companyId);
+      assert.equal((await timeLines(draft.id)).length, 2);
+      assert.equal((await tx.one<{ not_billed: boolean }>("select not_billed from time_entries where id = $1", [fe]))!.not_billed, true);
+
+      // Imported time (history from another tool) is never added by itself: it waits in Ready to bill for a person.
+      await tx.q(
+        `insert into time_entries (agency_id, user_id, job_id, task_id, work_date, hours, category, rate_cents, source)
+         values ($1, $2, $3, $4, $5, 5, 'billable', 100000, 'import')`,
+        [tx.agencyId, A.userId, tm, t2.id, addDays(day, -30)],
+      );
+      await syncUnbilledTime(tx, companyId);
+      assert.equal((await timeLines(draft.id)).length, 2, "imported time isn't billed automatically");
+      const imported = (await readyToBill(tx, companyId)).find((i) => i.source_type === "time" && i.source_id === tm);
+      assert.ok(imported, "imported time is offered in Ready to bill");
+      assert.equal(Number(imported.quantity), 5);
+
+      // Ready-to-bill items (milestones, confirmed imported time) join the same next invoice rather than starting another.
+      await readyJob(tx, companyId, { fee: 20_000_00, template: "campaign" });
+      const items = await readyToBill(tx, companyId);
+      assert.equal(await createInvoice(tx, companyId, items.map((i) => i.key)), draft.id);
+      assert.ok((await timeLines(draft.id)).some((l) => l.task_id === t2.id && l.unit_cents === 100000 && Number(l.quantity) === 5), "imported time is itemised like any other time");
+
+      // Once issued, the next time logged starts the next invoice; issued time can't be deleted.
+      await sendInvoice(tx, draft.id);
+      await logTime(tx, A.userId, { job_id: tm, task_id: t2.id, work_date: todayIn(), hours: 1 });
+      const next = await drafts();
+      assert.equal(next.length, 1);
+      assert.notEqual(next[0].id, draft.id);
+      assert.equal((await timeLines(next[0].id)).length, 1);
+      await assert.rejects(deleteTimeEntry(tx, A.userId, e1), /locked|issued/);
+
+      // Deleting the only time on a draft removes the empty draft too.
+      const only = (await tx.one<{ id: string }>("select id from time_entries where invoice_line_id in (select id from invoice_lines where invoice_id = $1)", [next[0].id]))!.id;
+      await deleteTimeEntry(tx, A.userId, only);
+      assert.equal((await drafts()).length, 0);
     });
   });
 

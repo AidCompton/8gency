@@ -69,7 +69,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
               <LogoCard logoV={user.agency_logo_v} agencyName={user.agency_name} back={`/app/billing/invoices/${id}`} />
               <form action={voidInvoiceAction}>
                 <input type="hidden" name="invoice_id" value={id} />
-                <SubmitButton confirm="Delete this draft? Its items go back to Ready to bill." className={buttonClass("ghost", "sm") + " w-full !text-critical-ink"}>
+                <SubmitButton confirm="Delete this draft? Its items go back to Ready to bill, and its time goes onto the client's next draft." className={buttonClass("ghost", "sm") + " w-full !text-critical-ink"}>
                   Delete draft
                 </SubmitButton>
               </form>

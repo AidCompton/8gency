@@ -2,12 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   addCostAction, addScopeItemAction, addTaskAction, closeJobAction, completeMilestoneAction, lockScopeAction, removeScopeItemAction,
-  saveBriefAction, setJobStatusAction, setTaskStatusAction, signOffBriefAction, updateJobAction,
+  saveBriefAction, setJobBillTimeAction, setJobStatusAction, setTaskStatusAction, signOffBriefAction, updateJobAction,
 } from "../../_actions/jobs";
 import { SubmitButton } from "@/components/SubmitButton";
 import { createDeliverableAction } from "../../_actions/review";
 import { createChangeRequestAction, logRequestAction } from "../../_actions/scope";
 import { logTimeAction, startTimerAction } from "../../_actions/time";
+import { LockSimple, Play } from "@phosphor-icons/react/ssr";
 import { Badge, Card, Empty, Field, Hours, Meter, Money, PageHeader, Pct, Stat, StatusBadge, Table, Tabs, Td, buttonClass, StatusIcon } from "@/components/ui";
 import { requireUser, tenant, type SessionUser } from "@/lib/auth";
 import type { Tx } from "@/lib/db";
@@ -55,12 +56,12 @@ export default async function JobPage({ params, searchParams }: { params: Promis
       <PageHeader
         back={{ href: "/app/jobs", label: "Jobs" }}
         title={<span className="flex flex-wrap items-center gap-2">{job.number} <span className="font-normal text-ink-2">{job.name}</span> <StatusBadge status={job.status} />{job.rush && <Badge tone="critical">Rush</Badge>}</span>}
-        subtitle={<><Link className="hover:underline" href={`/app/clients/${job.company_id}`}>{job.company_name}</Link> · {job.billing_model === "tm" ? "Time and materials" : job.billing_model === "retainer" ? `Retainer: ${job.retainer_name}` : job.billing_model === "internal" ? "Internal" : "Fixed fee"} · Owner {job.owner_name ?? "—"} · Due {formatDate(job.due_date)}</>}
+        subtitle={<><Link className="hover:underline" href={`/app/clients/${job.company_id}`}>{job.company_name}</Link> · {job.billing_model === "tm" ? "Time and materials" : job.billing_model === "retainer" ? `Retainer: ${job.retainer_name}` : job.billing_model === "internal" ? "Internal" : "Fixed fee"} · Owner {job.owner_name ?? "—"} · Due {formatDate(job.due_date)}{job.bill_time && <> · <Link className="text-brand hover:underline" href={`/app/jobs/${job.id}?tab=time`}>Time billed to client</Link></>}</>}
         actions={
           <form action={startTimerAction}>
             <input type="hidden" name="job_id" value={id} />
             <input type="hidden" name="back" value={base} />
-            <SubmitButton className={buttonClass("secondary", "sm")}>▶ Start timer on job</SubmitButton>
+            <SubmitButton className={buttonClass("secondary", "sm")}><Play aria-hidden size={14} weight="fill" /> Start timer on job</SubmitButton>
           </form>
         }
       />
@@ -462,31 +463,102 @@ async function reviewTab(tx: Tx, job: Job) {
 }
 
 async function timeTab(tx: Tx, job: Job, user: SessionUser) {
-  const entries = await tx.q<{ id: string; work_date: string; hours: number; category: string; notes: string; name: string; task: string | null; out_of_scope: boolean; oos_resolution: string | null; locked: boolean; rate_cents: number }>(
-    `select te.id, te.work_date, te.hours, te.category, te.notes, u.name, t.title as task, te.out_of_scope, te.oos_resolution, te.locked, te.rate_cents
-       from time_entries te join users u on u.id = te.user_id left join tasks t on t.id = te.task_id where te.job_id = $1 order by te.work_date desc, te.created_at desc limit 200`,
+  const entries = await tx.q<{ id: string; work_date: string; hours: number; category: string; notes: string; name: string; task: string | null; out_of_scope: boolean; oos_resolution: string | null; locked: boolean; rate_cents: number; not_billed: boolean; source: string; invoice_id: string | null; invoice_number: string | null; invoice_status: string | null }>(
+    `select te.id, te.work_date, te.hours, te.category, te.notes, u.name, t.title as task, te.out_of_scope, te.oos_resolution, te.locked, te.rate_cents,
+            te.not_billed, te.source, i.id as invoice_id, i.number as invoice_number, i.status as invoice_status
+       from time_entries te join users u on u.id = te.user_id left join tasks t on t.id = te.task_id
+       left join invoice_lines l on l.id = te.invoice_line_id left join invoices i on i.id = l.invoice_id
+      where te.job_id = $1 order by te.work_date desc, te.created_at desc limit 200`,
     [job.id],
   );
+  const billing = (await tx.one<{ next_hours: number; next_value: number; invoiced_hours: number; unbilled_hours: number; unbilled_value: number; draft_id: string | null }>(
+    `select coalesce(sum(te.hours) filter (where i.status = 'draft'), 0) as next_hours,
+            coalesce(sum(te.hours * te.rate_cents) filter (where i.status = 'draft'), 0) as next_value,
+            coalesce(sum(te.hours) filter (where i.status in ('sent', 'paid')), 0) as invoiced_hours,
+            coalesce(sum(te.hours) filter (where te.invoice_line_id is null and te.category = 'billable' and not te.out_of_scope and not te.not_billed and te.source <> 'import'), 0) as unbilled_hours,
+            coalesce(sum(te.hours * te.rate_cents) filter (where te.invoice_line_id is null and te.category = 'billable' and not te.out_of_scope and not te.not_billed and te.source <> 'import'), 0) as unbilled_value,
+            (select id from invoices where company_id = $2 and status = 'draft' order by created_at limit 1) as draft_id
+       from time_entries te left join invoice_lines l on l.id = te.invoice_line_id left join invoices i on i.id = l.invoice_id
+      where te.job_id = $1`,
+    [job.id, job.company_id],
+  ))!;
+  const canBill = can(user, "billing") || can(user, "manageJobs");
+  const billingStatus = (e: (typeof entries)[number]) =>
+    e.invoice_status === "draft" ? <Link className="text-brand hover:underline" href={`/app/billing/invoices/${e.invoice_id}`}>Next invoice</Link>
+    : e.invoice_number ? <Link className="hover:underline" href={`/app/billing/invoices/${e.invoice_id}`}>{e.invoice_number}</Link>
+    : e.not_billed ? <span className="text-ink-3">Not charged</span>
+    : e.category !== "billable" ? <span className="text-ink-3">Not billable</span>
+    : e.out_of_scope ? <span className="text-ink-3">Via change request</span>
+    : e.source === "import" ? job.bill_time ? <Link className="text-ink-3 hover:underline" href="/app/billing?tab=ready">Imported · Ready to bill</Link> : <span className="text-ink-3">Imported</span>
+    : job.bill_time && job.bill_time_from && e.work_date < job.bill_time_from ? <span className="text-ink-3">Before billing start</span>
+    : job.bill_time ? <span className="text-ink-3">Pending</span>
+    : <span className="text-ink-3">In job fee</span>;
   const tasks = await tx.q<{ id: string; title: string; out_of_scope: boolean }>("select id, title, out_of_scope from tasks where job_id = $1 and status <> 'done' order by title", [job.id]);
   const byPerson = await tx.q<{ name: string; hours: number }>("select u.name, sum(te.hours) as hours from time_entries te join users u on u.id = te.user_id where te.job_id = $1 group by u.name order by 2 desc", [job.id]);
   const money = can(user, "seeMargins");
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <Card pad={false}>
-        <Table head={["Date", "Person", "Task", "Category", "Hours", ...(money ? ["Value"] : [])]} empty="No time logged yet.">
+        <Table head={["Date", "Person", "Task", "Category", "Hours", ...(money ? ["Value"] : []), "Billing"]} empty="No time logged yet.">
           {entries.map((e) => (
             <tr key={e.id}>
               <Td className="text-ink-2">{formatShort(e.work_date)}</Td>
               <Td>{e.name}</Td>
               <Td className="max-w-[16rem] truncate text-ink-2">{e.task ?? e.notes ?? "—"} {e.out_of_scope && <Badge tone={e.oos_resolution === "absorbed" ? "warning" : "info"}>{e.oos_resolution === "absorbed" ? "absorbed" : "CR"}</Badge>}</Td>
               <Td className="text-xs text-ink-2">{e.category.replace(/_/g, " ")}</Td>
-              <Td right>{e.hours}{e.locked && " 🔒"}</Td>
+              <Td right><span className="inline-flex items-center gap-1">{e.hours}{e.locked && <><LockSimple aria-hidden size={12} className="text-ink-3" /><span className="sr-only"> (locked)</span></>}</span></Td>
               {money && <Td right><Money cents={e.hours * e.rate_cents} /></Td>}
+              <Td className="whitespace-nowrap text-xs">{billingStatus(e)}</Td>
             </tr>
           ))}
         </Table>
       </Card>
       <div className="space-y-4">
+        <Card title="Time billing" actions={job.bill_time ? <Badge tone="good" dot>On</Badge> : <Badge dot>Off</Badge>}>
+          {job.bill_time ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-ink-2">
+                Billable time goes onto {job.company_name}&apos;s next invoice as it&apos;s logged, itemised by task and role{job.bill_time_from ? <> (time from {formatDate(job.bill_time_from)})</> : null}.
+              </p>
+              <dl className="space-y-1.5">
+                <div className="flex justify-between gap-3"><dt className="text-ink-2">On the next invoice</dt><dd className="tnum font-medium">{Number(billing.next_hours)}h{money && <> · <Money cents={Math.round(billing.next_value)} /></>}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-ink-2">Already invoiced</dt><dd className="tnum">{Number(billing.invoiced_hours)}h</dd></div>
+              </dl>
+              <div className="flex flex-wrap gap-2">
+                {billing.draft_id && <Link href={`/app/billing/invoices/${billing.draft_id}`} className={buttonClass("secondary", "sm")}>Open next invoice</Link>}
+                {canBill && (
+                  <form action={setJobBillTimeAction}>
+                    <input type="hidden" name="job_id" value={job.id} />
+                    <input type="hidden" name="mode" value="off" />
+                    <SubmitButton confirm="Stop billing this job's time? Time already on the next invoice stays there until you remove it." className={buttonClass("ghost", "sm")}>Stop billing time</SubmitButton>
+                  </form>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3 text-sm">
+              <p className="text-ink-2">
+                Time is tracked for budget and profitability{job.billing_model === "retainer" ? ", and counts against the retainer" : job.billing_model === "fixed" ? ", and is covered by the job fee" : ""}. It isn&apos;t charged to the client.
+              </p>
+              {canBill && (
+                <form action={setJobBillTimeAction} className="flex flex-wrap gap-2">
+                  <input type="hidden" name="job_id" value={job.id} />
+                  <SubmitButton name="mode" value="from_today" className={buttonClass("primary", "sm")}>Bill time from today</SubmitButton>
+                  {Number(billing.unbilled_hours) > 0 && (
+                    <SubmitButton
+                      name="mode"
+                      value="all"
+                      confirm={`Also bill the ${Number(billing.unbilled_hours)}h already logged on this job? It goes onto ${job.company_name}'s next invoice now.`}
+                      className={buttonClass("secondary", "sm")}
+                    >
+                      Include {Number(billing.unbilled_hours)}h already logged{money && <> (<Money cents={Math.round(billing.unbilled_value)} compact />)</>}
+                    </SubmitButton>
+                  )}
+                </form>
+              )}
+            </div>
+          )}
+        </Card>
         <Card title="Log time">
           <form action={logTimeAction} className="space-y-3">
             <input type="hidden" name="job_id" value={job.id} />

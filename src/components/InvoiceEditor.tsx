@@ -174,7 +174,7 @@ export function InvoiceEditor({
                       type="button"
                       onClick={() => remove(r.key)}
                       aria-label={`Remove line ${i + 1}${r.description ? `: ${r.description}` : ""}`}
-                      title={r.source_type !== "manual" ? "Remove: the item goes back to Ready to bill" : "Remove line"}
+                      title={r.source_type === "time" ? "Remove: this time won't be charged" : r.source_type !== "manual" ? "Remove: the item goes back to Ready to bill" : "Remove line"}
                       className="grid h-7 w-7 place-items-center rounded-md text-ink-3 transition-colors hover:bg-critical/10 hover:text-critical-ink pointer-coarse:h-11 pointer-coarse:w-11"
                     >
                       <Trash aria-hidden size={15} />

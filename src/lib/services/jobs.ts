@@ -4,6 +4,7 @@ import { addDays, todayIn } from "../domain/dates";
 import { formatJobNumber } from "../domain/jobNumber";
 import { projectMargin } from "../domain/metrics";
 import { jobTemplate } from "../templates";
+import { syncUnbilledTime } from "./billing";
 import { agencySettings, nextCounter, notify, recordActivity, UserError, usersWithRoles } from "./core";
 
 export type JobStatus = "briefing" | "in_progress" | "waiting_client" | "complete" | "closed";
@@ -24,6 +25,8 @@ export interface JobRow {
   budget_hours: number;
   fee_cents: number;
   rush: boolean;
+  bill_time: boolean;
+  bill_time_from: string | null;
   brief_override_reason: string | null;
   scope_locked_at: Date | null;
   completed_at: Date | null;
@@ -49,6 +52,8 @@ export interface CreateJobInput {
   fee_cents?: number;
   rush?: boolean;
   assignee_id?: string | null;
+  /** Bill this job's time to the client. Default: on for hourly (T&M) jobs. */
+  bill_time?: boolean;
 }
 
 /** Rule 1: no work without a job. Every job gets a number, a client and an owner. */
@@ -72,8 +77,8 @@ export async function createJob(tx: Tx, input: CreateJobInput): Promise<string> 
 
   const job = (await tx.one<{ id: string }>(
     `insert into jobs (agency_id, company_id, retainer_id, number, name, job_type, billing_model, owner_id, account_manager_id,
-                       start_date, due_date, budget_hours, fee_cents, rush)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id`,
+                       start_date, due_date, budget_hours, fee_cents, rush, bill_time)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id`,
     [
       tx.agencyId,
       input.company_id,
@@ -89,6 +94,7 @@ export async function createJob(tx: Tx, input: CreateJobInput): Promise<string> 
       budgetHours,
       input.fee_cents ?? 0,
       input.rush ?? false,
+      input.bill_time ?? billing === "tm",
     ],
   ))!;
 
@@ -123,7 +129,7 @@ export async function createJob(tx: Tx, input: CreateJobInput): Promise<string> 
       );
     }
   }
-  await tx.audit("job.created", "job", job.id, undefined, { number, name: input.name, billing_model: billing, fee_cents: input.fee_cents ?? 0 });
+  await tx.audit("job.created", "job", job.id, undefined, { number, name: input.name, billing_model: billing, fee_cents: input.fee_cents ?? 0, bill_time: input.bill_time ?? billing === "tm" });
   return job.id;
 }
 
@@ -296,8 +302,8 @@ export interface JobFinancials {
 
 /**
  * Money on every screen (principle 2). Revenue is the fee plus approved change
- * requests for fixed jobs, time at standard rates for T&M, and a share of the
- * retainer fee by hours for retainer jobs.
+ * requests for fixed jobs, a share of the retainer fee by hours for retainer
+ * jobs, plus (any model) the time the client is charged for when the job bills time.
  */
 export async function jobFinancials(tx: Tx, jobId: string): Promise<JobFinancials> {
   const j = await tx.one<{ billing_model: string; fee_cents: number; budget_hours: number; retainer_id: string | null; status: string }>(
@@ -305,12 +311,15 @@ export async function jobFinancials(tx: Tx, jobId: string): Promise<JobFinancial
     [jobId],
   );
   if (!j) throw new UserError("Job not found.");
-  const t = (await tx.one<{ hours: number; billable: number; cost: number; value: number }>(
-    `select coalesce(sum(hours),0) as hours,
-            coalesce(sum(hours) filter (where category = 'billable'),0) as billable,
-            coalesce(sum(hours * cost_cents),0) as cost,
-            coalesce(sum(hours * rate_cents) filter (where category = 'billable'),0) as value
-       from time_entries where job_id = $1`,
+  const t = (await tx.one<{ hours: number; billable: number; cost: number; value: number; charged: number }>(
+    `select coalesce(sum(te.hours),0) as hours,
+            coalesce(sum(te.hours) filter (where te.category = 'billable'),0) as billable,
+            coalesce(sum(te.hours * te.cost_cents),0) as cost,
+            coalesce(sum(te.hours * te.rate_cents) filter (where te.category = 'billable'),0) as value,
+            -- What the client pays for: billable, in scope, not written down, from the job's billing start.
+            coalesce(sum(te.hours * te.rate_cents) filter (where j.bill_time and te.category = 'billable' and not te.out_of_scope and not te.not_billed
+                                                            and (j.bill_time_from is null or te.work_date >= j.bill_time_from)),0) as charged
+       from time_entries te join jobs j on j.id = te.job_id where te.job_id = $1`,
     [jobId],
   ))!;
   const cr = (await tx.one<{ approved: number; absorbed: number }>(
@@ -343,13 +352,13 @@ export async function jobFinancials(tx: Tx, jobId: string): Promise<JobFinancial
 
   let revenue = 0;
   if (j.billing_model === "fixed") revenue = j.fee_cents + cr.approved;
-  else if (j.billing_model === "tm") revenue = Math.round(t.value) + cr.approved;
+  else if (j.billing_model === "tm") revenue = cr.approved;
   else if (j.billing_model === "retainer" && j.retainer_id) {
     const r = await tx.one<{ fee_cents: number; hours_per_period: number }>("select fee_cents, hours_per_period from retainers where id = $1", [j.retainer_id]);
     const perHour = r && r.hours_per_period > 0 ? r.fee_cents / r.hours_per_period : 0;
     revenue = Math.round(t.hours * perHour) + cr.approved;
   }
-  revenue += costs.rebill;
+  revenue += Math.round(t.charged) + costs.rebill;
   const labour = Math.round(t.cost);
   return {
     hoursUsed: t.hours,
@@ -393,4 +402,19 @@ export async function listJobs(tx: Tx, filter: { status?: string; companyId?: st
                coalesce(j.due_date, '9999-12-31')`,
     [filter.status ?? null, filter.companyId ?? null, filter.userId ?? null, filter.includeClosed ?? false],
   );
+}
+
+/**
+ * Turn time billing on or off for a job. "from_today" bills only time worked
+ * from today; "all" also sweeps up every unbilled billable hour already on the
+ * job. Either way it's synced onto the client's next invoice straight away.
+ */
+export async function setJobBillTime(tx: Tx, jobId: string, mode: "off" | "from_today" | "all") {
+  const job = await tx.one<{ company_id: string; bill_time: boolean; bill_time_from: string | null }>("select company_id, bill_time, bill_time_from from jobs where id = $1", [jobId]);
+  if (!job) throw new UserError("Job not found.");
+  const settings = await agencySettings(tx);
+  const from = mode === "from_today" ? todayIn(settings.timezone) : null;
+  await tx.q("update jobs set bill_time = $2, bill_time_from = $3 where id = $1", [jobId, mode !== "off", mode === "off" ? job.bill_time_from : from]);
+  await tx.audit("job.bill_time", "job", jobId, { bill_time: job.bill_time, bill_time_from: job.bill_time_from }, { bill_time: mode !== "off", bill_time_from: from });
+  if (mode !== "off") await syncUnbilledTime(tx, job.company_id);
 }

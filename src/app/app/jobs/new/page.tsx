@@ -45,6 +45,13 @@ export default async function NewJob({ searchParams }: { searchParams: Promise<{
               <option value="internal">Internal / pitch (not billed)</option>
             </select>
           </Field>
+          <Field label="Bill time to the client" hint="Billable time is added to the client's next invoice automatically, itemised by task.">
+            <select name="bill_time" defaultValue="auto">
+              <option value="auto">Automatic: yes for time and materials, no otherwise</option>
+              <option value="yes">Yes, bill time on this job</option>
+              <option value="no">No, time is covered by the fee</option>
+            </select>
+          </Field>
           <Field label="Retainer (if billed against one)">
             <select name="retainer_id" defaultValue="">
               <option value="">None</option>

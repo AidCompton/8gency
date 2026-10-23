@@ -2,8 +2,8 @@
 import { act, bool, num, opt, str } from "@/lib/actions";
 import { requireUser, tenant } from "@/lib/auth";
 import { toCents } from "@/lib/domain/money";
-import { assertCan } from "@/lib/permissions";
-import { addTask, closeJob, completeMilestone, createJob, lockScope, setJobStatus, setTaskStatus, type JobStatus } from "@/lib/services/jobs";
+import { assertCan, can } from "@/lib/permissions";
+import { addTask, closeJob, completeMilestone, createJob, lockScope, setJobBillTime, setJobStatus, setTaskStatus, type JobStatus } from "@/lib/services/jobs";
 import { addScopeItem, removeScopeItem } from "@/lib/services/scope";
 import { UserError } from "@/lib/services/core";
 
@@ -26,6 +26,8 @@ export async function createJobAction(fd: FormData) {
         fee_cents: toCents(str(fd, "fee")),
         budget_hours: str(fd, "budget_hours") ? num(fd, "budget_hours") : undefined,
         rush: bool(fd, "rush"),
+        // "auto" = on for hourly (T&M) jobs, off otherwise.
+        bill_time: str(fd, "bill_time") === "yes" ? true : str(fd, "bill_time") === "no" ? false : undefined,
       });
       return `/app/jobs/${id}?tab=brief`;
     }),
@@ -170,4 +172,20 @@ export async function addCostAction(fd: FormData) {
       await tx.audit("cost.created", "job", id, undefined, { amount, description: str(fd, "description") });
     }),
   "Cost added.");
+}
+
+/** Turn a job's time billing on (from today, or including time already logged) or off. */
+export async function setJobBillTimeAction(fd: FormData) {
+  const user = await requireUser();
+  if (!can(user, "billing")) assertCan(user, "manageJobs");
+  const id = str(fd, "job_id");
+  const mode = str(fd, "mode") as "off" | "from_today" | "all";
+  await act(
+    `/app/jobs/${id}?tab=time`,
+    () => {
+      if (!["off", "from_today", "all"].includes(mode)) throw new UserError("Choose how to bill this job's time.");
+      return tenant(user, (tx) => setJobBillTime(tx, id, mode));
+    },
+    mode === "off" ? "This job's time is no longer billed to the client." : "Billable time on this job now goes onto the client's next invoice automatically.",
+  );
 }

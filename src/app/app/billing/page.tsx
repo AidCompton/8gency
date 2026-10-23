@@ -7,7 +7,7 @@ import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { addDays, endOfMonth, formatShort, startOfMonth, todayIn } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
 
-import { debtors, listInvoices, readyToBill, wipValuation } from "@/lib/services/billing";
+import { debtors, listInvoices, readyToBill, syncUnbilledTime, wipValuation } from "@/lib/services/billing";
 import { agencySettings } from "@/lib/services/core";
 import { timesheetCompliance } from "@/lib/services/time";
 
@@ -20,6 +20,15 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const today = todayIn(user.timezone);
   const lastMonthEnd = addDays(startOfMonth(today), -1);
   const data = await tenant(user, async (tx) => ({
+    // Catch-up: time normally lands on the next invoice as it's logged; this also covers jobs just switched to bill time.
+    synced: await syncUnbilledTime(tx),
+    drafts: await tx.q<{ id: string; company_id: string; company_name: string; total_cents: number; currency: string; lines: number; time_hours: number; created_at: Date }>(
+      `select i.id, i.company_id, co.name as company_name, i.total_cents, i.currency, i.created_at,
+              (select count(*)::int from invoice_lines l where l.invoice_id = i.id) as lines,
+              (select coalesce(sum(l.quantity), 0) from invoice_lines l where l.invoice_id = i.id and l.source_type = 'time') as time_hours
+         from invoices i join companies co on co.id = i.company_id
+        where i.status = 'draft' order by i.total_cents desc`,
+    ),
     ready: await readyToBill(tx),
     invoices: tab === "invoices" ? await listInvoices(tx) : [],
     debt: await debtors(tx),
@@ -27,6 +36,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     settings: await agencySettings(tx),
     compliance: tab === "close" ? await timesheetCompliance(tx, startOfMonth(lastMonthEnd), lastMonthEnd) : [],
   }));
+  const draftFor = new Map(data.drafts.map((d) => [d.company_id, d]));
   const byClient = new Map<string, typeof data.ready>();
   for (const i of data.ready) byClient.set(i.company_id, [...(byClient.get(i.company_id) ?? []), i]);
   const readyTotal = data.ready.reduce((s, i) => s + i.amount_cents, 0);
@@ -43,6 +53,26 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       </div>
       <Tabs base="/app/billing" active={tab} tabs={[{ key: "ready", label: `Ready to bill · ${data.ready.length}` }, { key: "invoices", label: "Invoices" }, { key: "debtors", label: "Debtors" }, { key: "wip", label: "WIP" }, { key: "close", label: "Month-end close" }]} />
 
+      {tab === "ready" && data.drafts.length > 0 && (
+        <Card title="Next invoices" className="mb-4" actions={<span className="text-xs text-ink-3">Billable time is added as it's logged</span>} pad={false}>
+          <ul className="divide-y divide-line">
+            {data.drafts.map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">{d.company_name}</div>
+                  <div className="text-xs text-ink-3">
+                    {d.lines} {d.lines === 1 ? "line" : "lines"}
+                    {Number(d.time_hours) > 0 && <> · {Number(d.time_hours)}h of time</>} · draft since {formatShort(new Date(d.created_at).toISOString().slice(0, 10))}
+                  </div>
+                </div>
+                <span className="tnum font-semibold"><Money cents={d.total_cents} currency={d.currency} /></span>
+                <Link href={`/app/billing/invoices/${d.id}`} className={buttonClass("secondary", "sm")}>Review &amp; issue</Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       {tab === "ready" && (byClient.size ? (
         <div className="space-y-4">
           {[...byClient.entries()].map(([companyId, items]) => (
@@ -53,18 +83,18 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
                   {items.map((i) => (
                     <li key={i.key} className="flex items-center gap-3 py-2 text-sm">
                       <input type="checkbox" name="item" value={i.key} defaultChecked aria-label={i.description} />
-                      <span className="min-w-0 flex-1 truncate">{i.description}{i.source_type === "time" && <span className="text-ink-3"> · {i.quantity}h</span>}</span>
+                      <span className="min-w-0 flex-1 truncate">{i.description}</span>
                       <span className={`inline-flex items-center gap-1 text-xs ${i.overdue ? "text-critical-ink" : "text-ink-3"}`}>{i.overdue && <StatusIcon tone="critical" />}waiting {i.age_days}d</span>
                       <Money cents={i.amount_cents} />
                     </li>
                   ))}
                 </ul>
-                <div className="mt-3"><SubmitButton className={buttonClass("primary", "sm")}>Draft invoice</SubmitButton></div>
+                <div className="mt-3"><SubmitButton className={buttonClass("primary", "sm")}>{draftFor.has(companyId) ? "Add to next invoice" : "Draft invoice"}</SubmitButton></div>
               </form>
             </Card>
           ))}
         </div>
-      ) : <Empty>Nothing waiting to be billed.</Empty>)}
+      ) : data.drafts.length ? null : <Empty>Nothing waiting to be billed.</Empty>)}
 
       {tab === "invoices" && (
         <Card pad={false}>

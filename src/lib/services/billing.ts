@@ -24,7 +24,10 @@ export interface BillableItem {
 
 /**
  * The "ready to bill" queue (M15): completed milestones, retainer periods,
- * approved change requests, unbilled T&M time and re-billable costs. Anything
+ * approved change requests, re-billable costs and imported time. (Time logged
+ * in 8gency doesn't wait here: syncUnbilledTime puts it straight onto the
+ * client's open draft. Imported time may already have been billed in the old
+ * tool, so a person confirms it here first.) Anything
  * that has waited longer than the agency's limit is flagged (FN-01).
  */
 export async function readyToBill(tx: Tx, companyId?: string): Promise<BillableItem[]> {
@@ -74,17 +77,17 @@ export async function readyToBill(tx: Tx, companyId?: string): Promise<BillableI
     )),
   );
 
-  // T&M time, grouped per job and rate so each line is one rate × hours.
   rows.push(
     ...(await tx.q<Omit<BillableItem, "key" | "age_days" | "overdue">>(
       `select 'time' as source_type, j.id as source_id, j.company_id, co.name as company_name, j.id as job_id, j.number as job_number,
-              j.number || ' ' || j.name || ': time to ' || to_char(max(te.work_date), 'DD Mon') as description,
+              j.number || ' ' || j.name || ': imported time to ' || to_char(max(te.work_date), 'DD Mon') as description,
               round(sum(te.hours)::numeric, 2) as quantity,
-              round(sum(te.hours * te.rate_cents) / nullif(sum(te.hours),0)) as unit_cents,
+              round(sum(te.hours * te.rate_cents) / nullif(sum(te.hours), 0)) as unit_cents,
               round(sum(te.hours * te.rate_cents)) as amount_cents,
               min(te.work_date)::text as ready_since, co.po_required
          from time_entries te join jobs j on j.id = te.job_id join companies co on co.id = j.company_id
-        where j.billing_model = 'tm' and te.category = 'billable' and te.invoice_line_id is null and not te.out_of_scope
+        where j.bill_time and te.source = 'import' and te.category = 'billable' and te.invoice_line_id is null and not te.out_of_scope and not te.not_billed
+          and (j.bill_time_from is null or te.work_date >= j.bill_time_from)
           and ($1::uuid is null or j.company_id = $1)
         group by j.id, j.company_id, co.name, j.number, j.name, co.po_required`,
       [c],
@@ -111,10 +114,15 @@ export async function readyToBill(tx: Tx, companyId?: string): Promise<BillableI
     .sort((a, b) => b.age_days - a.age_days);
 }
 
-/** Build a draft invoice from ready-to-bill items for one client. */
-export async function createInvoice(tx: Tx, companyId: string, itemKeys: string[], extra: { po_number?: string; notes?: string } = {}) {
-  const items = (await readyToBill(tx, companyId)).filter((i) => itemKeys.includes(i.key));
-  if (!items.length) throw new UserError("Select at least one item to bill.");
+/**
+ * The client's next invoice: their open draft, or a new one. One draft per
+ * client at a time, so time, milestones and change requests all land on the
+ * same invoice. Serialised per client so concurrent time logs can't make two.
+ */
+export async function openDraft(tx: Tx, companyId: string): Promise<{ id: string; created: boolean }> {
+  await tx.q("select pg_advisory_xact_lock(hashtext('draft:' || $1))", [companyId]);
+  const existing = await tx.one<{ id: string }>("select id from invoices where company_id = $1 and status = 'draft' order by created_at limit 1", [companyId]);
+  if (existing) return { id: existing.id, created: false };
   const company = await tx.one<{ entity_id: string | null; currency: string }>("select entity_id, currency from companies where id = $1", [companyId]);
   const entity = await tx.one<{ id: string; tax_label: string; tax_rate: number; currency: string }>(
     "select id, tax_label, tax_rate, currency from entities where id = coalesce($1, (select id from entities where is_default limit 1))",
@@ -122,28 +130,125 @@ export async function createInvoice(tx: Tx, companyId: string, itemKeys: string[
   );
   if (!entity) throw new UserError("Set up a billing entity in Settings first.");
   const inv = await tx.one<{ id: string }>(
-    `insert into invoices (agency_id, entity_id, company_id, currency, tax_label, tax_rate, po_number, notes)
-     values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
-    [tx.agencyId, entity.id, companyId, company?.currency ?? entity.currency, entity.tax_label, entity.tax_rate, extra.po_number ?? "", extra.notes ?? ""],
+    `insert into invoices (agency_id, entity_id, company_id, currency, tax_label, tax_rate) values ($1,$2,$3,$4,$5,$6) returning id`,
+    [tx.agencyId, entity.id, companyId, company?.currency ?? entity.currency, entity.tax_label, entity.tax_rate],
   );
-  let sort = 0;
-  for (const item of items) {
+  return { id: inv!.id, created: true };
+}
+
+const nextSort = async (tx: Tx, invoiceId: string) =>
+  (await tx.one<{ n: number }>("select coalesce(max(sort), -1) + 1 as n from invoice_lines where invoice_id = $1", [invoiceId]))!.n;
+
+/** Add ready-to-bill items to the client's next invoice (their open draft, or a new one). */
+export async function createInvoice(tx: Tx, companyId: string, itemKeys: string[], extra: { po_number?: string; notes?: string } = {}) {
+  const items = (await readyToBill(tx, companyId)).filter((i) => itemKeys.includes(i.key));
+  if (!items.length) throw new UserError("Select at least one item to bill.");
+  const draft = await openDraft(tx, companyId);
+  const inv = { id: draft.id };
+  if (extra.po_number || extra.notes) await tx.q("update invoices set po_number = coalesce(nullif($2,''), po_number), notes = coalesce(nullif($3,''), notes) where id = $1", [inv.id, extra.po_number ?? "", extra.notes ?? ""]);
+  let sort = await nextSort(tx, inv.id);
+  for (const item of items.filter((i) => i.source_type === "time")) await syncUnbilledTime(tx, companyId, { jobId: item.source_id, imported: true });
+  for (const item of items.filter((i) => i.source_type !== "time")) {
     const line = await tx.one<{ id: string }>(
       `insert into invoice_lines (agency_id, invoice_id, job_id, description, quantity, unit_cents, amount_cents, source_type, source_id, sort)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
       [tx.agencyId, inv!.id, item.job_id, item.description, item.quantity, item.unit_cents, item.amount_cents, item.source_type, item.source_id, sort++],
     );
     if (item.source_type === "milestone") await tx.q("update milestones set status = 'invoiced' where id = $1", [item.source_id]);
-    if (item.source_type === "time")
-      await tx.q(
-        "update time_entries set invoice_line_id = $2 where job_id = $1 and category = 'billable' and invoice_line_id is null and not out_of_scope",
-        [item.source_id, line!.id],
-      );
     if (item.source_type === "cost") await tx.q("update costs set invoice_line_id = $2 where id = $1", [item.source_id, line!.id]);
   }
-  await recalcInvoice(tx, inv!.id);
-  await tx.audit("invoice.drafted", "invoice", inv!.id, undefined, { items: items.map((i) => i.key) });
-  return inv!.id;
+  await recalcInvoice(tx, inv.id);
+  await tx.audit(draft.created ? "invoice.drafted" : "invoice.items_added", "invoice", inv.id, undefined, { items: items.map((i) => i.key) });
+  return inv.id;
+}
+
+/**
+ * Billable time goes onto the client's next invoice by itself, so nobody has
+ * to work out what was done or what it cost. Picks up every unbilled,
+ * billable, in-scope entry on jobs that bill time (from their start date),
+ * itemised per job, task and rate: "JOB-0001 Homepage design · Designer",
+ * hours × rate. Later time on the same task and rate tops up the same line.
+ * Imported time (history from another tool) only goes on when confirmed from
+ * Ready to bill (opts.imported, for that job).
+ * Idempotent: safe to call after any time change.
+ */
+export async function syncUnbilledTime(tx: Tx, companyId?: string | null, opts: { jobId?: string; imported?: boolean } = {}) {
+  const groups = await tx.q<{ company_id: string; job_id: string; task_id: string | null; rate_cents: number; hours: number; description: string; notes: string[]; entry_ids: string[] }>(
+    `select j.company_id, te.job_id, te.task_id, te.rate_cents, round(sum(te.hours)::numeric, 2) as hours,
+            j.number || ' ' || coalesce(t.title, j.name) || coalesce(' · ' || string_agg(distinct nullif(u.title, ''), ', '), '') as description,
+            -- What was done, from the time notes (minus the internal closed-job override prefix).
+            array_remove(array_agg(distinct nullif(btrim(regexp_replace(te.notes, '^\\[closed-job override:[^]]*\\]\\s*', '')), '')), null) as notes,
+            array_agg(te.id) as entry_ids
+       from time_entries te
+       join jobs j on j.id = te.job_id
+       join users u on u.id = te.user_id
+       left join tasks t on t.id = te.task_id
+      where j.bill_time and te.category = 'billable' and not te.out_of_scope and not te.not_billed and te.invoice_line_id is null
+        and (te.source <> 'import' or $2::boolean) -- imported history may have been billed in the old tool: only when confirmed
+        and (j.bill_time_from is null or te.work_date >= j.bill_time_from)
+        and ($3::uuid is null or j.id = $3)
+        and ($1::uuid is null or j.company_id = $1)
+      group by j.company_id, te.job_id, te.task_id, te.rate_cents, j.number, j.name, t.title
+      order by j.number, t.title nulls first, te.rate_cents desc`,
+    [companyId ?? null, opts.imported ?? false, opts.jobId ?? null],
+  );
+  const touched = new Map<string, { hours: number; lines: number }>();
+  for (const g of groups) {
+    const draft = await openDraft(tx, g.company_id);
+    if (draft.created) await tx.audit("invoice.drafted", "invoice", draft.id, undefined, { from: "time" });
+    const existing = await tx.one<{ id: string }>(
+      "select id from invoice_lines where invoice_id = $1 and source_type = 'time' and job_id = $2 and task_id is not distinct from $3 and unit_cents = $4",
+      [draft.id, g.job_id, g.task_id, g.rate_cents],
+    );
+    let lineId = existing?.id;
+    if (lineId) {
+      // Top up the hours, and add any notes the line doesn't mention yet (keeping edits made in the editor).
+      const cur = (await tx.one<{ description: string }>("select description from invoice_lines where id = $1", [lineId]))!.description;
+      const fresh = g.notes.filter((n) => !cur.includes(n));
+      const description = fresh.length ? withNotes(`${cur}${cur.includes(" — ") ? "; " : " — "}`, fresh) : cur;
+      await tx.q("update invoice_lines set quantity = quantity + $2, description = $3 where id = $1", [lineId, g.hours, description]);
+    } else {
+      lineId = (await tx.one<{ id: string }>(
+        `insert into invoice_lines (agency_id, invoice_id, job_id, task_id, description, quantity, unit_cents, amount_cents, source_type, source_id, sort)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,'time',$3,$9) returning id`,
+        [tx.agencyId, draft.id, g.job_id, g.task_id, g.notes.length ? withNotes(`${g.description} — `, g.notes) : g.description, g.hours, g.rate_cents, lineAmount({ quantity: g.hours, unit_cents: g.rate_cents }), await nextSort(tx, draft.id)],
+      ))!.id;
+    }
+    await tx.q("update time_entries set invoice_line_id = $1 where id = any($2::uuid[])", [lineId, g.entry_ids]);
+    const t = touched.get(draft.id) ?? { hours: 0, lines: 0 };
+    touched.set(draft.id, { hours: t.hours + Number(g.hours), lines: t.lines + 1 });
+  }
+  for (const [invoiceId, t] of touched) {
+    await recalcInvoice(tx, invoiceId);
+    await tx.audit("invoice.time_added", "invoice", invoiceId, undefined, { hours: Math.round(t.hours * 100) / 100, lines: t.lines });
+  }
+  return { drafts: touched.size, hours: [...touched.values()].reduce((s, t) => s + t.hours, 0) };
+}
+
+/** "prefix" + notes joined with "; ", capped so a line stays readable on the invoice. */
+function withNotes(prefix: string, notes: string[]) {
+  const text = prefix + notes.join("; ");
+  return text.length > 400 ? `${text.slice(0, 399).trimEnd()}…` : text;
+}
+
+/** A time entry was deleted or changed while on a draft: take its hours off the line (and drop an empty line). */
+export async function unbillTimeEntry(tx: Tx, entry: { hours: number; invoice_line_id: string }) {
+  const line = await tx.one<{ invoice_id: string; status: string; quantity: number }>(
+    "select l.invoice_id, i.status, l.quantity from invoice_lines l join invoices i on i.id = l.invoice_id where l.id = $1",
+    [entry.invoice_line_id],
+  );
+  if (!line) return;
+  if (line.status !== "draft") throw new UserError("This time is on an issued invoice and can't change. Raise a credit note instead.");
+  const left = Math.round((Number(line.quantity) - Number(entry.hours)) * 100) / 100;
+  if (left > 0) await tx.q("update invoice_lines set quantity = $2 where id = $1", [entry.invoice_line_id, left]);
+  else await tx.q("delete from invoice_lines where id = $1", [entry.invoice_line_id]);
+  // A draft that's now empty has nothing to send: remove it rather than leave an R0 invoice behind.
+  if (!(await tx.one("select 1 from invoice_lines where invoice_id = $1", [line.invoice_id]))) {
+    await tx.q("delete from invoices where id = $1 and status = 'draft'", [line.invoice_id]);
+    await tx.audit("invoice.draft_deleted", "invoice", line.invoice_id, undefined, { reason: "last time entry removed" });
+    return;
+  }
+  await recalcInvoice(tx, line.invoice_id);
 }
 
 export async function recalcInvoice(tx: Tx, invoiceId: string) {
@@ -210,7 +315,14 @@ export async function saveDraftInvoice(tx: Tx, invoiceId: string, f: DraftInvoic
   for (const l of lines) if (l.id && !existing.some((e) => e.id === l.id)) throw new UserError("A line was changed elsewhere. Reload the invoice and try again.");
   const removed = existing.filter((e) => !kept.has(e.id));
   for (const e of removed) {
-    await releaseLine(tx, e);
+    if (e.source_type === "time") {
+      // Removing time from the invoice = choosing not to charge it. Mark it so the next sync doesn't add it back.
+      const h = (await tx.one<{ hours: number }>("select coalesce(sum(hours), 0) as hours from time_entries where invoice_line_id = $1", [e.id]))!.hours;
+      await tx.q("update time_entries set not_billed = true, invoice_line_id = null where invoice_line_id = $1", [e.id]);
+      await tx.audit("time.written_down", "invoice", invoiceId, undefined, { line: e.id, hours: Number(h) });
+    } else {
+      await releaseLine(tx, e);
+    }
     await tx.q("delete from invoice_lines where id = $1", [e.id]);
   }
   let sort = 0;

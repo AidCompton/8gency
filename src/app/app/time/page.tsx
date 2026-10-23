@@ -1,4 +1,4 @@
-import { CaretLeft, CaretRight } from "@phosphor-icons/react/ssr";
+import { CaretLeft, CaretRight, LockSimple } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import { SubmitButton } from "@/components/SubmitButton";
 import { confirmSuggestionsAction, deleteTimeAction, logTimeAction } from "../_actions/time";
@@ -87,8 +87,8 @@ export default async function TimePage({ searchParams }: { searchParams: Promise
                   <Td className="max-w-[18rem] truncate text-ink-2">{e.task_title ?? e.notes ?? e.job_name} {e.out_of_scope && <Badge tone={e.oos_resolution === "absorbed" ? "warning" : "info"}>{e.oos_resolution === "absorbed" ? "absorbed" : "CR"}</Badge>} {e.source !== "manual" && <span className="text-xs text-ink-3">· {e.source}</span>}</Td>
                   <Td className="text-xs text-ink-2">{e.category.replace(/_/g, " ")}</Td>
                   <Td right>{e.hours}</Td>
-                  <Td>{e.locked || e.invoice_line_id ? <span title="Locked">🔒</span> : (
-                    <form action={deleteTimeAction}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="back" value={`/app/time?day=${day}`} /><SubmitButton confirm="Remove this time entry?" className={buttonClass("ghost", "sm")}>Remove</SubmitButton></form>
+                  <Td>{e.locked || (e.invoice_line_id && e.invoice_status !== "draft") ? <span title="Locked: closed month or issued invoice" className="inline-flex text-ink-3"><LockSimple aria-hidden size={14} /><span className="sr-only">Locked</span></span> : (
+                    <form action={deleteTimeAction}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="back" value={`/app/time?day=${day}`} /><SubmitButton confirm={e.invoice_status === "draft" ? "Remove this time entry? It also comes off the client's next invoice." : "Remove this time entry?"} className={buttonClass("ghost", "sm")}>Remove</SubmitButton></form>
                   )}</Td>
                 </tr>
               ))}
