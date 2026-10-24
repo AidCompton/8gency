@@ -1,0 +1,204 @@
+@import "tailwindcss";
+
+/* 8gency tokens. Data-viz colours follow the dataviz reference palette:
+   sequential blue for magnitude, fixed status colours always paired with a label. */
+:root {
+  color-scheme: light;
+  --bg: #f7f7f9;
+  --surface: #ffffff;
+  --surface-2: #f2f2f5;
+  --border: #e4e4e9;
+  --control-border: #8a8a96;
+  --text: #0f0f14;
+  --text-2: #4b4b57;
+  --text-3: #686875;
+  --brand: #5b3df5;
+  --brand-ink: #ffffff;
+  --seq: #2a78d6;
+  --seq-soft: #cde2fb;
+  --seq-ink: #1f64b8;
+  --track: #ececf1;
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --warning: #fab219;
+  --warning-ink: #8a5a00;
+  --critical: #d03b3b;
+  --critical-ink: #a32626;
+  --focus: #5b3df5;
+  /* Soft layered elevation (Soft UI Evolution): cards, raised controls, popovers. */
+  --elev-xs: 0 1px 2px rgb(16 16 24 / 0.05);
+  --elev-sm: 0 1px 2px rgb(16 16 24 / 0.04), 0 1px 3px rgb(16 16 24 / 0.06);
+  --elev-md: 0 2px 4px rgb(16 16 24 / 0.04), 0 6px 16px rgb(16 16 24 / 0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #0e0e12;
+    --surface: #16161b;
+    --surface-2: #1f1f26;
+    --border: #2a2a33;
+    --control-border: #686875;
+    --text: #f2f2f5;
+    --text-2: #c2c2cc;
+    --text-3: #92929e;
+    --brand: #8b78ff;
+    --brand-ink: #0b0b0b;
+    --seq: #3987e5;
+    --seq-soft: #184f95;
+    --seq-ink: #6da7ec;
+    --track: #30303a;
+    --good-ink: #5fd35f;
+    --warning-ink: #fab219;
+    --critical-ink: #f08080;
+    --focus: #8b78ff;
+    --elev-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+    --elev-sm: 0 1px 2px rgb(0 0 0 / 0.4), 0 0 0 1px rgb(255 255 255 / 0.02);
+    --elev-md: 0 4px 16px rgb(0 0 0 / 0.5);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e0e12;
+  --surface: #16161b;
+  --surface-2: #1f1f26;
+  --border: #2a2a33;
+  --control-border: #686875;
+  --text: #f2f2f5;
+  --text-2: #c2c2cc;
+  --text-3: #92929e;
+  --brand: #8b78ff;
+  --brand-ink: #0b0b0b;
+  --seq: #3987e5;
+  --seq-soft: #184f95;
+  --seq-ink: #6da7ec;
+  --track: #30303a;
+  --good-ink: #5fd35f;
+  --warning-ink: #fab219;
+  --critical-ink: #f08080;
+  --focus: #8b78ff;
+  --elev-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --elev-sm: 0 1px 2px rgb(0 0 0 / 0.4), 0 0 0 1px rgb(255 255 255 / 0.02);
+  --elev-md: 0 4px 16px rgb(0 0 0 / 0.5);
+}
+
+/* Invoice sheet: always the light palette, whatever the app theme (it previews the printed page). */
+.paper {
+  color-scheme: light;
+  --bg: #f7f7f9;
+  --surface: #ffffff;
+  --surface-2: #f2f2f5;
+  --border: #e4e4e9;
+  --control-border: #8a8a96;
+  --text: #0f0f14;
+  --text-2: #4b4b57;
+  --text-3: #686875;
+  --brand: #5b3df5;
+  --brand-ink: #ffffff;
+  --good-ink: #006300;
+  --warning-ink: #8a5a00;
+  --critical-ink: #a32626;
+  --seq-ink: #1f64b8;
+  --focus: #5b3df5;
+  --elev-xs: 0 1px 2px rgb(16 16 24 / 0.05);
+}
+/* Agency logos are usually drawn for light backgrounds: give them a white chip (invisible on light surfaces). */
+.logo-chip { background: #fff; border-radius: 6px; padding: 3px 6px; }
+/* Automation builder canvas: n8n-style dot grid. */
+.canvas-dots { background-color: var(--bg); background-image: radial-gradient(circle, var(--border) 1.2px, transparent 1.2px); background-size: 20px 20px; }
+/* Inline-edit fields (invoice editor): look like text until hovered or focused. */
+.input-inline:not(:hover, :focus-visible) { border-color: transparent; background: transparent; box-shadow: none; }
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-control: var(--control-border);
+  --color-ink: var(--text);
+  --color-ink-2: var(--text-2);
+  --color-ink-3: var(--text-3);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-seq: var(--seq);
+  --color-seq-soft: var(--seq-soft);
+  --color-seq-ink: var(--seq-ink);
+  --color-track: var(--track);
+  --color-good: var(--good);
+  --color-good-ink: var(--good-ink);
+  --color-warning: var(--warning);
+  --color-warning-ink: var(--warning-ink);
+  --color-critical: var(--critical);
+  --color-critical-ink: var(--critical-ink);
+  --color-pin-client: #eb6834;
+  --shadow-xs: var(--elev-xs);
+  --shadow-sm: var(--elev-sm);
+  --shadow-md: var(--elev-md);
+  --font-sans: var(--font-inter), "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+html, body { background: var(--bg); color: var(--text); }
+/* Grid children may shrink below their content (a 560px table then scrolls inside its card
+   instead of widening the page). Base layer, so an explicit min-w-* utility still wins. */
+@layer base { .grid > * { min-width: 0; } }
+body { font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased; }
+.tnum { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+::selection { background: color-mix(in srgb, var(--brand) 25%, transparent); }
+
+input, select, textarea {
+  background: var(--surface);
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 14px;
+  color: var(--text);
+  width: 100%;
+  min-width: 0;
+  box-shadow: var(--elev-xs);
+  transition: border-color 150ms, box-shadow 150ms;
+}
+input::placeholder, textarea::placeholder { color: var(--text-3); }
+input:hover:not(:focus, :disabled), select:hover:not(:focus, :disabled), textarea:hover:not(:focus, :disabled) { border-color: var(--text-3); }
+/* Focus: brand border + soft ring (the 1px brand border alone is ≥3:1 against the field). */
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+input[type="checkbox"], input[type="radio"] { box-shadow: none; accent-color: var(--brand); }
+input[type="file"] { box-shadow: none; }
+/* One control height: fields and selects match md buttons (36px). */
+input:not([type="checkbox"], [type="radio"], [type="file"]), select { height: 2.25rem; }
+/* Compact fields inside table rows / inline forms: match sm buttons (28px). */
+input.field-sm, select.field-sm { height: 1.75rem; padding: 3px 8px; font-size: 13px; }
+textarea { min-height: 84px; }
+input[type="checkbox"], input[type="radio"] { width: auto; }
+input[type="file"] { padding: 6px; }
+label { font-size: 13px; color: var(--text-2); }
+/* Tailwind v4 preflight resets buttons to cursor: default. */
+button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
+
+/* Touch: 44px targets, and 16px text so iOS doesn't zoom on focus. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"], [type="radio"], [type="hidden"], [type="file"]), select { height: 44px; font-size: 16px; }
+  textarea { font-size: 16px; }
+  input[type="file"] { min-height: 44px; }
+}
+
+/* <Stagger> (components/Motion.tsx): hide items until GSAP takes over, so they don't flash in then fade.
+   Failsafe: if JS never runs they appear after 1.5s anyway. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-stagger-root]:not([data-stagger-done]) [data-stagger] { visibility: hidden; animation: stagger-failsafe 0s 1.5s forwards; }
+}
+@keyframes stagger-failsafe { to { visibility: visible; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+@page { size: A4; margin: 14mm; }
+@media print {
+  .no-print { display: none !important; }
+  body, html { background: white; color: black; }
+  .paper { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}
