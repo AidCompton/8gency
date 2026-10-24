@@ -201,7 +201,7 @@ export async function healthScan(tx: Tx, days = 90) {
     { key: "unbilled", title: "Billable work not yet invoiced", detail: `Ready to bill for more than ${settings.bill_within_days} days`, cents: sum(unbilled, (u) => u.amount_cents), rows: unbilled.length, href: "/app/billing" },
     { key: "overdue", title: "Overdue invoices", detail: "Cash owed past its due date", cents: sum(overdue, (o) => o.outstanding), rows: overdue.length, href: "/app/billing?tab=debtors" },
     { key: "margin", title: "Low-margin clients", detail: "Profit lost against a 25% margin floor", cents: Math.round(sum(leastProfitable, (c) => Math.max(0, 0.25 * c.revenue - c.profit))), rows: leastProfitable.length, href: "/app/pulse" },
-    { key: "utilisation", title: "Billable capacity unused", detail: "Hours below each person's utilisation target, at their average rate", cents: sum(underUtilised, (p) => p.gapValue), rows: underUtilised.length, href: "/app/pulse#people" },
+    { key: "utilisation", title: "Billable capacity unused", detail: "Hours below each person's utilisation target, at their average rate", cents: sum(underUtilised, (p) => p.gapValue), rows: underUtilised.length, href: "/app/pulse?tab=people" },
   ];
   return {
     window: w,

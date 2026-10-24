@@ -1,18 +1,55 @@
+import type { Icon } from "@phosphor-icons/react";
+import { ArrowsLeftRight, Briefcase, Buildings, CaretRight, CheckCircle, Clock, Eye, Gift, Receipt, Repeat, Tray } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { BarList, Card, Empty, LinkButton, Meter, Money, PageHeader, Pct, Stat, HealthBadge, TextLink } from "@/components/ui";
+import { Card, LinkButton, Money, PageHeader, Pct, Stat, TONE, TextLink, cx } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
 import { ageSince } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
+import { firstName } from "@/lib/domain/text";
 import { can } from "@/lib/permissions";
 import { runAutomations } from "@/lib/services/automations";
 import { wipRisks } from "@/lib/services/eightgent";
 import { clientHealthScores, healthScan, ownerSummary } from "@/lib/services/pulse";
 import { listRetainers } from "@/lib/services/retainers";
 import { reviewsWaiting } from "@/lib/services/review";
-import { firstName } from "@/lib/domain/text";
 
 export const metadata = { title: "Home" };
+
+const compact = (c: number) => formatMoney(c, "ZAR", { compact: true });
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+type Severity = "critical" | "warning" | "info";
+interface Item {
+  severity: Severity;
+  icon: Icon;
+  title: string;
+  meta?: string;
+  href: string;
+  action: string;
+}
+const TONE_OF: Record<Severity, keyof typeof TONE> = { critical: "critical", warning: "warning", info: "info" };
+const RANK: Record<Severity, number> = { critical: 0, warning: 1, info: 2 };
+
+function AttentionRow({ i }: { i: Item }) {
+  return (
+    <li>
+      <Link href={i.href} className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-2/60">
+        <span aria-hidden className={cx("grid h-9 w-9 shrink-0 place-items-center rounded-lg", TONE[TONE_OF[i.severity]])}>
+          <i.icon size={18} weight="bold" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-ink">{i.title}</span>
+          {i.meta && <span className="block truncate text-xs text-ink-3">{i.meta}</span>}
+        </span>
+        <span className="hidden shrink-0 items-center gap-1 text-xs font-medium text-ink-3 transition-colors group-hover:text-brand sm:inline-flex">
+          {i.action}
+          <CaretRight aria-hidden size={12} weight="bold" />
+        </span>
+      </Link>
+    </li>
+  );
+}
 
 export default async function Home() {
   const user = await requireUser();
@@ -23,115 +60,112 @@ export default async function Home() {
     return {
       summary: await ownerSummary(tx),
       scan: await healthScan(tx),
-      risks: (await wipRisks(tx)).slice(0, 6),
-      health: (await clientHealthScores(tx)).filter((c) => c.score !== null).sort((a, b) => (a.score ?? 0) - (b.score ?? 0)),
+      risks: await wipRisks(tx),
+      health: await clientHealthScores(tx),
       reviews: await reviewsWaiting(tx),
-      retainers: (await listRetainers(tx)).filter((r) => !mine || r.retainer.company_id),
+      retainers: await listRetainers(tx),
       triage: (await tx.one<{ n: number }>("select count(*)::int as n from client_requests where status = 'new'"))!.n,
       waitingClient: await tx.q<{ id: string; name: string; company_name: string; sent_to_client_at: Date }>(
         `select d.id, d.name, c.name as company_name, d.sent_to_client_at from deliverables d join jobs j on j.id = d.job_id join companies c on c.id = j.company_id
-          where d.status = 'client_review' and ($1::uuid is null or j.account_manager_id = $1) order by d.sent_to_client_at limit 8`,
+          where d.status = 'client_review' and ($1::uuid is null or j.account_manager_id = $1) order by d.sent_to_client_at`,
         [mine],
       ),
-      crOpen: await tx.q<{ id: string; title: string; status: string; price_cents: number; company_name: string }>(
-        `select cr.id, cr.title, cr.status, cr.price_cents, c.name as company_name from change_requests cr join companies c on c.id = cr.company_id
-          where cr.status in ('draft','sent') and ($1::uuid is null or c.account_manager_id = $1) order by cr.created_at desc limit 8`,
+      crOpen: (await tx.one<{ n: number }>(
+        `select count(*)::int as n from change_requests cr join companies c on c.id = cr.company_id
+          where cr.status in ('draft','sent') and ($1::uuid is null or c.account_manager_id = $1)`,
         [mine],
-      ),
+      ))!.n,
     };
   });
   const s = data.summary;
   const monthName = new Date(`${s.month.from}T00:00:00Z`).toLocaleDateString("en-ZA", { month: "long", timeZone: "UTC" });
+
+  // One prioritised list instead of a card per topic: the most urgent things first.
+  const items: Item[] = [];
+  if (s.overdueDebtors > 0) items.push({ severity: "critical", icon: Receipt, title: `${compact(s.overdueDebtors)} overdue from clients`, meta: `${compact(s.debtors)} owed in total`, href: "/app/billing?tab=debtors", action: "Chase" });
+  for (const r of data.retainers.filter((r) => r.burn?.alert))
+    items.push({ severity: "critical", icon: Repeat, title: `${r.retainer.company_name} retainer is ahead of the month`, meta: `${r.usedHours}h of ${r.allocated}h used so far`, href: `/app/retainers/${r.retainer.id}`, action: "Review" });
+  for (const c of data.health.filter((c) => c.band === "at_risk"))
+    items.push({ severity: "critical", icon: Buildings, title: `${c.name} looks at risk`, meta: `Client health ${c.score} / 100`, href: `/app/clients/${c.id}`, action: "Open" });
+  for (const r of data.risks.slice(0, 4))
+    items.push({ severity: "warning", icon: Briefcase, title: `${r.number} ${r.name}`, meta: r.reasons[0] + (r.reasons.length > 1 ? ` · ${plural(r.reasons.length - 1, "more issue")}` : ""), href: `/app/jobs/${r.job_id}`, action: "Open" });
+  if (data.triage) items.push({ severity: "warning", icon: Tray, title: `${plural(data.triage, "new client request")} to triage`, href: "/app/scope", action: "Triage" });
+  if (s.absorbedMonth > 0) items.push({ severity: "warning", icon: Gift, title: `${compact(s.absorbedMonth)} of extra work given away this month`, meta: "Absorbed instead of charged", href: "/app/scope?tab=absorbed", action: "Review" });
+  if (data.crOpen) items.push({ severity: "info", icon: ArrowsLeftRight, title: `${plural(data.crOpen, "change request")} waiting`, href: "/app/scope?tab=changes", action: "Open" });
+  if (data.reviews.length) items.push({ severity: "info", icon: Eye, title: `${plural(data.reviews.length, "internal review")} waiting`, href: "/app/my-day", action: "Review" });
+  if (data.waitingClient.length)
+    items.push({ severity: "info", icon: Clock, title: `${plural(data.waitingClient.length, "deliverable")} with clients`, meta: `Oldest: ${data.waitingClient[0].company_name}, ${ageSince(data.waitingClient[0].sent_to_client_at)}`, href: "/app/jobs?status=waiting_client", action: "Open" });
+  items.sort((a, b) => RANK[a.severity] - RANK[b.severity]);
+  const shown = items.slice(0, 6);
+  const more = items.slice(6);
+
+  const leaks = data.scan.findings.filter((f) => !["overdue", "utilisation"].includes(f.key) && f.cents > 0).sort((a, b) => b.cents - a.cents);
+  const topLeak = Math.max(1, ...leaks.map((f) => f.cents));
+
   return (
     <>
-      <PageHeader title={`Good day, ${firstName(user.name)}`} subtitle={`${user.agency_name} · ${monthName} to date`} actions={<LinkButton href="/app/pulse">Open Pulse</LinkButton>} />
+      <PageHeader
+        title={`Good day, ${firstName(user.name)}`}
+        subtitle={
+          <>
+            {monthName} so far: <b className="font-semibold text-ink">{compact(s.profit)} profit</b>, on track for {compact(s.forecastProfit)}.{" "}
+            {items.length ? `${plural(items.length, "thing needs", "things need")} your attention.` : "Nothing needs your attention."}
+          </>
+        }
+        actions={<LinkButton href="/app/pulse">Open Pulse</LinkButton>}
+      />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Profit this month" value={<Money cents={s.profit} compact />} hint={<>Forecast <Money cents={s.forecastProfit} compact /> · margin <Pct n={s.margin} /></>} tone={s.margin !== null && s.margin < 0.15 ? "warning" : undefined} href="/app/pulse" />
-        <Stat label="Cash owed to you" value={<Money cents={s.debtors} compact />} hint={s.overdueDebtors ? <>{formatMoney(s.overdueDebtors, "ZAR", { compact: true })} overdue · DSO {s.dso ?? "—"}d</> : `DSO ${s.dso ?? "—"} days`} tone={s.overdueDebtors ? "critical" : undefined} href="/app/billing?tab=debtors" />
-        <Stat label="Unbilled WIP" value={<Money cents={s.wip} compact />} hint="Work done, not yet invoiced" href="/app/billing?tab=wip" />
-        <Stat label="Billable utilisation" value={<Pct n={s.utilisation} />} hint="Delivery team, this month" tone={(s.utilisation ?? 0) < 0.55 ? "warning" : "good"} href="/app/pulse#people" />
-        <Stat label="Scope given away" value={<Money cents={s.absorbedMonth} compact />} hint="Absorbed this month" tone={s.absorbedMonth > 0 ? "warning" : "good"} href="/app/scope?tab=absorbed" />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Profit this month" value={<Money cents={s.profit} compact />} hint={`On track for ${compact(s.forecastProfit)}`} tone={s.margin !== null && s.margin < 0.15 ? "warning" : undefined} href="/app/pulse" />
+        <Stat label="Owed to you" value={<Money cents={s.debtors} compact />} hint={s.overdueDebtors ? `${compact(s.overdueDebtors)} overdue` : "Nothing overdue"} tone={s.overdueDebtors ? "critical" : "good"} href="/app/billing?tab=debtors" />
+        <Stat label="Ready to invoice" value={<Money cents={s.wip} compact />} hint="Work done, not billed yet" href="/app/billing?tab=wip" />
+        <Stat label="Team on billable work" value={<Pct n={s.utilisation} />} hint="This month" tone={(s.utilisation ?? 0) < 0.55 ? "warning" : "good"} href="/app/pulse?tab=people" />
       </div>
 
-      <div className="mt-6 grid gap-4 lg:grid-cols-3">
-        <Card title="Agency Health Scan · last 90 days" className="lg:col-span-2" actions={<TextLink href="/app/pulse">Full scan</TextLink>}>
-          <p className="mb-4 text-sm text-ink-2">
-            <span className="text-2xl font-semibold text-ink tnum">{formatMoney(data.scan.total, "ZAR", { compact: true })}</span> leaking from scope, retainers, billing and pricing,
-            plus <b className="tnum">{formatMoney(data.scan.cashAtRisk, "ZAR", { compact: true })}</b> overdue.
-          </p>
-          <BarList
-            rows={data.scan.findings.filter((f) => f.key !== "utilisation").map((f) => ({ label: f.title, value: f.cents, href: f.href, negative: f.key === "overdue" }))}
-            format={(v) => formatMoney(v, "ZAR", { compact: true })}
-          />
-        </Card>
-        <Card title="Needs you">
-          <ul className="space-y-2 text-sm">
-            <li className="flex justify-between"><Link className="hover:underline" href="/app/scope">New client requests to triage</Link><b className="tnum">{data.triage}</b></li>
-            <li className="flex justify-between"><Link className="hover:underline" href="/app/scope?tab=changes">Change requests open</Link><b className="tnum">{data.crOpen.length}</b></li>
-            <li className="flex justify-between"><Link className="hover:underline" href="/app/my-day">Internal reviews waiting</Link><b className="tnum">{data.reviews.length}</b></li>
-          </ul>
-          <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-ink-3">Waiting on clients</h3>
-          {data.waitingClient.length ? (
-            <ul className="space-y-1.5 text-sm">
-              {data.waitingClient.map((w) => (
-                <li key={w.id} className="flex justify-between gap-2">
-                  <Link href={`/app/deliverables/${w.id}`} className="truncate hover:underline">{w.company_name}: {w.name}</Link>
-                  <span className="shrink-0 text-ink-3 tnum">{ageSince(w.sent_to_client_at)}</span>
-                </li>
-              ))}
-            </ul>
+      <div className="mt-6 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <Card title="Needs your attention" pad={false} actions={items.length ? <span className="text-xs text-ink-3">Most urgent first</span> : null}>
+          {items.length ? (
+            <>
+              <ul className="divide-y divide-line">{shown.map((i, n) => <AttentionRow key={n} i={i} />)}</ul>
+              {more.length > 0 && (
+                <details className="group border-t border-line">
+                  <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-brand hover:bg-surface-2/60 pointer-coarse:py-4 [&::-webkit-details-marker]:hidden">
+                    <span className="group-open:hidden">Show {plural(more.length, "more item")}</span>
+                    <span className="hidden group-open:inline">Show fewer</span>
+                  </summary>
+                  <ul className="divide-y divide-line border-t border-line">{more.map((i, n) => <AttentionRow key={n} i={i} />)}</ul>
+                </details>
+              )}
+            </>
           ) : (
-            <p className="text-sm text-ink-3">Nothing with clients.</p>
-          )}
-        </Card>
-      </div>
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        <Card title="Jobs at risk" actions={<TextLink href="/app/jobs">Traffic</TextLink>}>
-          {data.risks.length ? (
-            <ul className="space-y-3 text-sm">
-              {data.risks.map((r) => (
-                <li key={r.job_id}>
-                  <Link href={`/app/jobs/${r.job_id}`} className="font-medium hover:underline">{r.number} · {r.name}</Link>
-                  <div className="text-xs text-ink-2">{r.reasons.join(" · ")}</div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <Empty>All live jobs on pace.</Empty>
-          )}
-        </Card>
-        <Card title="Retainer burn this month">
-          {data.retainers.length ? (
-            <div className="space-y-4">
-              {data.retainers.map((r) => (
-                <Link key={r.retainer.id} href={`/app/retainers/${r.retainer.id}`} className="block">
-                  <Meter value={r.usedHours} max={r.allocated} label={`${r.retainer.company_name} · ${r.retainer.name}`} sublabel={`${r.usedHours}h / ${r.allocated}h`} marker={r.burn?.elapsed} markerLabel="month elapsed" />
-                  {r.burn?.alert && <div className="mt-1 text-xs text-critical-ink">Burn is ahead of the month by {Math.round(r.burn.aheadBy * 100)} points</div>}
-                </Link>
-              ))}
-              <p className="text-xs text-ink-3">The black tick shows how much of the month has passed.</p>
+            <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-ink-2">
+              <CheckCircle aria-hidden size={28} weight="fill" className="text-good-ink" />
+              All clear: nothing is overdue, at risk or waiting on you.
             </div>
-          ) : (
-            <Empty>No active retainers.</Empty>
           )}
         </Card>
-        <Card title="Client health">
-          {data.health.length ? (
-            <ul className="space-y-2 text-sm">
-              {data.health.map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-2">
-                  <Link href={`/app/clients/${c.id}`} className="truncate hover:underline">{c.name}</Link>
-                  <span className="flex items-center gap-2">
-                    <span className="tnum font-medium">{c.score}</span>
-                    <HealthBadge band={c.band} />
-                  </span>
+
+        <Card title="Where money is leaking" actions={<TextLink href="/app/pulse">Full scan</TextLink>}>
+          <div className="text-3xl font-semibold tracking-tight tnum">{compact(data.scan.total)}</div>
+          <p className="mt-1 text-sm text-ink-2">lost in the last 90 days</p>
+          {leaks.length ? (
+            <ul className="mt-5 space-y-3.5">
+              {leaks.slice(0, 4).map((f) => (
+                <li key={f.key}>
+                  <Link href={f.href} className="group block rounded">
+                    <span className="flex items-baseline justify-between gap-3 text-sm">
+                      <span className="truncate text-ink-2 group-hover:text-ink">{f.title}</span>
+                      <span className="tnum font-medium">{compact(f.cents)}</span>
+                    </span>
+                    <span aria-hidden className="mt-1.5 block h-1.5 rounded-full bg-track">
+                      <span className="block h-full rounded-full bg-seq" style={{ width: `${Math.max(4, (f.cents / topLeak) * 100)}%` }} />
+                    </span>
+                  </Link>
                 </li>
               ))}
             </ul>
           ) : (
-            <Empty>Health scores appear once work is delivered and invoiced.</Empty>
+            <p className="mt-4 text-sm text-ink-3">No leaks found.</p>
           )}
         </Card>
       </div>
