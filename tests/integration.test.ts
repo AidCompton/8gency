@@ -359,8 +359,8 @@ describe("operating rules", () => {
       await tx.q("update automations set enabled = false where builtin = 'collections'");
       assert.equal((await enabledBuiltins(tx)).has("collections"), false);
 
-      // Connector actions can't be saved until the connector exists.
-      assert.throws(() => validateFlow({ trigger: { type: "invoice.sent", config: {} }, filters: [], actions: [{ type: "slack_message", config: {} }] }), /needs a connector/);
+      // Connector steps save with their defaults; they need the app connected to run (tests/connectors.test.ts).
+      assert.deepEqual(validateFlow({ trigger: { type: "invoice.sent", config: {} }, filters: [], actions: [{ type: "slack_message", config: {} }] }).actions[0].config, { channel: "client", message: "{{trigger}}: {{item}} · {{client}}" });
       assert.throws(() => validateFlow({ trigger: null, filters: [], actions: [] }), /trigger/);
     });
   });

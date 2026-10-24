@@ -4,7 +4,8 @@ import { act, num, str } from "@/lib/actions";
 import { asContact, resolveHubToken } from "@/lib/services/hub";
 import { addFeedback, clientDecision } from "@/lib/services/review";
 import { decideChangeRequest, submitClientRequest } from "@/lib/services/scope";
-import { UserError } from "@/lib/services/core";
+import { appUrl, UserError } from "@/lib/services/core";
+import { PAY_PROVIDERS, startCheckout, type PayProvider } from "@/lib/connectors/payments";
 
 // Every hub action re-resolves the token and checks the item belongs to the
 // contact's company, so a link only ever acts on that client's own work.
@@ -73,4 +74,20 @@ export async function hubRequestAction(fd: FormData) {
   await act(`/hub/${str(fd, "token")}`, () =>
     asContact(contact, async (tx) => void (await submitClientRequest(tx, { company_id: contact.company_id, contact_id: contact.id, body: str(fd, "body"), channel: "hub" }))),
   "Request received. Your account manager will confirm timing and whether it's in scope.");
+}
+
+/** Pay now: start a checkout with the chosen provider and send the client there. */
+export async function hubPayAction(fd: FormData) {
+  const contact = await contactFor(fd);
+  const id = str(fd, "invoice_id");
+  const back = `/hub/${str(fd, "token")}/invoices/${id}`;
+  await act(back, () =>
+    asContact(contact, async (tx) => {
+      const owns = await tx.one("select 1 from invoices where id = $1 and company_id = $2", [id, contact.company_id]);
+      if (!owns) throw new UserError("Not found.");
+      const p = str(fd, "provider") as PayProvider;
+      if (!PAY_PROVIDERS.includes(p)) throw new UserError("Choose how to pay.");
+      return startCheckout(tx, p, id, { name: contact.name, email: contact.email }, appUrl(back));
+    }),
+  );
 }

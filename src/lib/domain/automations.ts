@@ -103,7 +103,7 @@ export interface ActionDef {
   description: string;
   icon: IconKey;
   fields: Field[];
-  /** Set for actions that need a connector that isn't live yet. */
+  /** The connector this step sends through; it must be connected for the step to run. */
   connector?: string;
 }
 
@@ -138,9 +138,33 @@ export const ACTIONS: ActionDef[] = [
       { key: "due_in_days", label: "Due in (days)", type: "number", default: 2, min: 0, max: 90 },
     ],
   },
-  { type: "slack_message", label: "Post to Slack", description: "Post to a channel.", icon: "slack", fields: [], connector: "slack" },
-  { type: "gmail_send", label: "Send from Gmail", description: "Send from your own mailbox.", icon: "gmail", fields: [], connector: "gmail" },
-  { type: "calendar_event", label: "Add to Google Calendar", description: "Book time or a client meeting.", icon: "calendar", fields: [], connector: "google_calendar" },
+  {
+    type: "slack_message", label: "Post to Slack", description: "Post in the client's channel or your default channel.", icon: "slack", connector: "slack",
+    fields: [
+      { key: "channel", label: "Channel", type: "select", default: "client", options: [{ value: "client", label: "The client's channel (else the default)" }, { value: "default", label: "The default channel" }] },
+      { key: "message", label: "Message", type: "textarea", default: "{{trigger}}: {{item}} · {{client}}" },
+    ],
+  },
+  {
+    type: "gmail_send", label: "Send from Gmail", description: "Email the client from your connected Gmail.", icon: "gmail", connector: "gmail",
+    fields: [
+      { key: "to", label: "To", type: "select", default: "approver", options: CONTACTS },
+      { key: "subject", label: "Subject", type: "text", default: "{{item}}" },
+      { key: "body", label: "Message", type: "textarea", default: "Hi {{contact}},\n\n…\n\n{{hub_link}}\n\n{{agency}}" },
+    ],
+  },
+  {
+    type: "calendar_event", label: "Add to Google Calendar", description: "Book time on a team member's calendar, optionally inviting the client.", icon: "calendar", connector: "google_calendar",
+    fields: [
+      { key: "title", label: "Event", type: "text", default: "Review: {{item}}" },
+      { key: "who", label: "On whose calendar", type: "select", default: "account_manager", options: [{ value: "account_manager", label: "Account manager" }, { value: "job_owner", label: "Job owner" }] },
+      { key: "in_days", label: "Days from now", type: "number", default: 1, min: 0, max: 60 },
+      { key: "time", label: "Start time (24h)", type: "text", default: "10:00", hint: "Your agency's time zone" },
+      { key: "minutes", label: "Length (minutes)", type: "number", default: 30, min: 15, max: 480 },
+      { key: "invite", label: "Invite from the client", type: "select", default: "none", options: [{ value: "none", label: "Nobody" }, ...CONTACTS] },
+      { key: "notes", label: "Description", type: "textarea", default: "{{job}} for {{client}}" },
+    ],
+  },
 ];
 
 /** Words you can drop into any message; filled from the record that triggered the run. */
@@ -282,6 +306,6 @@ export const BUILTINS: BuiltinDef[] = [
   { key: "client_checkins", name: "New client check-ins", description: "Reminds the account manager to check in at 30, 60 and 90 days.", trigger: { label: "Client anniversary", icon: "repeat", detail: "30 · 60 · 90 days" }, actions: [{ label: "Notify the team", icon: "bell", detail: "Account manager" }] },
   { key: "contract_renewals", name: "Contract renewals", description: "Reminds the account manager and owners 90, 60 and 30 days before a renewal or end date.", trigger: { label: "Contract renews or ends", icon: "file", detail: "90 · 60 · 30 days ahead" }, actions: [{ label: "Notify the team", icon: "bell", detail: "Account manager, owners" }] },
   { key: "retainer_alerts", name: "Retainer overservicing", description: "Alerts the account manager and owners when a retainer's hours run ahead of the month.", trigger: { label: "Retainer burn ahead", icon: "gauge", detail: "Mid-period" }, actions: [{ label: "Notify the team", icon: "bell", detail: "Account manager, owners" }] },
-  { key: "collections", name: "Invoice reminders", description: "Polite reminders 3 days before due, then 1, 7 and 14 days after; escalates to the account manager at 14.", trigger: { label: "Invoice due or overdue", icon: "hourglass", detail: "−3 · 1 · 7 · 14 days" }, actions: [{ label: "Email the client", icon: "envelope", detail: "Billing contact" }, { label: "Notify the team", icon: "bell", detail: "Account manager at 14 days" }] },
   { key: "burnout_watch", name: "Burnout watch", description: "Tells owners and ops when someone is overloaded: weeks well over their contracted hours, a very heavy week so far, or more work booked for the next two weeks than they have time for.", trigger: { label: "Someone is overloaded", icon: "gauge", detail: "Checked daily · once a week per person" }, actions: [{ label: "Notify the team", icon: "bell", detail: "Owners and ops" }] },
+  { key: "collections", name: "Invoice reminders", description: "Polite reminders 3 days before due, then 1, 7 and 14 days after; escalates to the account manager at 14.", trigger: { label: "Invoice due or overdue", icon: "hourglass", detail: "−3 · 1 · 7 · 14 days" }, actions: [{ label: "Email the client", icon: "envelope", detail: "Billing contact" }, { label: "Notify the team", icon: "bell", detail: "Account manager at 14 days" }] },
 ];

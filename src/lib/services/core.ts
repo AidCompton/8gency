@@ -94,19 +94,31 @@ export async function recordActivity(tx: Tx, kind: string, ids: { jobId?: string
 }
 
 /**
- * Queue an outbound email or WhatsApp message. The outbox is the delivery
- * boundary: a worker hands queued rows to the email provider or the WhatsApp
- * Business Platform. In development you can read them at /app/outbox.
+ * Queue an outbound message (email, WhatsApp, Slack or a calendar event). The
+ * outbox is the delivery boundary: the connector worker sends queued rows
+ * through the agency's connected apps (src/lib/connectors/delivery.ts).
+ * Until a channel is connected they wait, visible at /app/outbox.
  */
 export async function queueMessage(
   tx: Tx,
-  m: { channel: "email" | "whatsapp"; toName: string; to: string; subject?: string; body: string; relatedType?: string; relatedId?: string },
+  m: {
+    channel: "email" | "whatsapp" | "slack" | "calendar";
+    toName: string;
+    to: string;
+    subject?: string;
+    body: string;
+    relatedType?: string;
+    relatedId?: string;
+    /** Send through this connector (e.g. "gmail") rather than the agency's default. */
+    via?: string;
+    payload?: Record<string, unknown>;
+  },
 ) {
   if (!m.to) return;
   await tx.q(
-    `insert into outbox_messages (agency_id, channel, to_name, to_address, subject, body, related_type, related_id)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [tx.agencyId, m.channel, m.toName, m.to, m.subject ?? "", m.body, m.relatedType ?? null, m.relatedId ?? null],
+    `insert into outbox_messages (agency_id, channel, to_name, to_address, subject, body, related_type, related_id, via, payload)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [tx.agencyId, m.channel, m.toName, m.to, m.subject ?? "", m.body, m.relatedType ?? null, m.relatedId ?? null, m.via ?? null, JSON.stringify(m.payload ?? {})],
   );
 }
 

@@ -1,6 +1,6 @@
 "use client";
 import { useGSAP } from "@gsap/react";
-import { ArrowLeft, Lightning, Lock, Plus, Trash, X } from "@phosphor-icons/react";
+import { ArrowLeft, Lightning, Plus, Trash, X } from "@phosphor-icons/react";
 import gsap from "gsap";
 import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
@@ -30,11 +30,12 @@ function triggerSummary(s: Step) {
 function actionSummary(s: Step) {
   const d = actionDef(s.type);
   if (!d) return "";
-  if (d.connector) return "Needs a connector";
   const to = d.fields.find((f) => f.key === "to");
   if (s.type === "create_task") return `“${s.config.title}”`;
   if (s.type === "notify") return `${optionLabel(to!, s.config.to)} · “${s.config.message}”`;
-  if (s.type === "email_client") return `${optionLabel(to!, s.config.to)} · “${s.config.subject}”`;
+  if (s.type === "email_client" || s.type === "gmail_send") return `${optionLabel(to!, s.config.to)} · “${s.config.subject}”`;
+  if (s.type === "slack_message") return `${s.config.channel === "client" ? "Client's channel" : "Default channel"} · “${s.config.message}”`;
+  if (s.type === "calendar_event") return `“${s.config.title}” · ${s.config.minutes} min`;
   return optionLabel(to!, s.config.to);
 }
 
@@ -46,6 +47,7 @@ export function FlowBuilder({
   id,
   initial,
   clients,
+  connected = [],
   templateKey,
   saveAction,
   deleteAction,
@@ -54,6 +56,8 @@ export function FlowBuilder({
   id: string | null;
   initial: { name: string; description: string; enabled: boolean; flow: FlowDef };
   clients: { id: string; name: string }[];
+  /** Connector keys this agency has connected, to flag steps that can't run yet. */
+  connected?: string[];
   templateKey?: string | null;
   saveAction: (fd: FormData) => Promise<void>;
   deleteAction?: (fd: FormData) => Promise<void>;
@@ -145,11 +149,10 @@ export function FlowBuilder({
     if (!trigger) return "Choose what starts the automation.";
     if (showFilter && filters.some((f) => !String(f.value).trim())) return "Fill in or remove the empty filter.";
     if (!actions.length) return "Add at least one action.";
-    if (actions.some((a) => actionDef(a.type)?.connector)) return "Remove the steps that need a connector, then save.";
     return null;
   };
 
-  const node = (key: string, props: { kind: "trigger" | "filter" | "action"; eyebrow: string; title: string; summary: string; icon: Parameters<typeof AutomationIcon>[0]["icon"]; active: boolean; onClick: () => void; onRemove?: () => void; locked?: boolean }) => (
+  const node = (key: string, props: { kind: "trigger" | "filter" | "action"; eyebrow: string; title: string; summary: string; icon: Parameters<typeof AutomationIcon>[0]["icon"]; active: boolean; onClick: () => void; onRemove?: () => void }) => (
     <div data-node={key} className="relative">
       <button
         type="button"
@@ -160,13 +163,12 @@ export function FlowBuilder({
           props.active ? "border-brand shadow-md ring-2 ring-brand/30" : "border-line hover:border-ink-3/40 hover:shadow-md",
         )}
       >
-        <AutomationIcon icon={props.icon} tone={props.locked ? "neutral" : toneFor(props.kind, props.icon)} />
+        <AutomationIcon icon={props.icon} tone={toneFor(props.kind, props.icon)} />
         <span className="min-w-0 flex-1">
           <span className="block text-[11px] font-semibold uppercase tracking-wider text-ink-3">{props.eyebrow}</span>
           <span className="mt-0.5 block truncate text-sm font-semibold text-ink">{props.title}</span>
           <span className="mt-0.5 block truncate text-xs text-ink-2">{props.summary}</span>
         </span>
-        {props.locked && <Lock aria-hidden size={14} className="mt-1 text-ink-3" />}
       </button>
       {props.onRemove && (
         <button
@@ -321,22 +323,21 @@ export function FlowBuilder({
               <li key={a.type}>
                 <button
                   type="button"
-                  disabled={!!a.connector}
                   onClick={() => addAction(a.type, selected.at)}
                   className="flex w-full items-center gap-3 rounded-lg border border-transparent p-2 text-left transition-colors enabled:hover:border-line enabled:hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <AutomationIcon icon={a.icon} tone={a.connector ? "neutral" : toneFor("action", a.icon)} size="sm" />
+                  <AutomationIcon icon={a.icon} tone={toneFor("action", a.icon)} size="sm" />
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium">{a.label}</span>
                     <span className="block truncate text-xs text-ink-3">{a.description}</span>
                   </span>
-                  {a.connector && <Badge>Soon</Badge>}
+                  {a.connector && !connected.includes(a.connector) && <Badge>Not connected</Badge>}
                 </button>
               </li>
             ))}
           </ul>
           <p className="text-xs text-ink-3">
-            Slack, Gmail and Calendar steps arrive with <Link href="/app/connectors" className="text-brand hover:underline">Connectors</Link>.
+            Slack, Gmail and Calendar steps send through your <Link href="/app/connectors" className="text-brand hover:underline">Connectors</Link>.
           </p>
         </div>
       );
@@ -349,12 +350,14 @@ export function FlowBuilder({
     return (
       <div className="space-y-4">
         <Heading icon={<AutomationIcon icon={d.icon} tone={toneFor("action", d.icon)} />} title={d.label} sub={d.description} />
-        {d.connector ? (
-          <p className="rounded-lg border border-line bg-surface-2/60 p-3 text-sm text-ink-2">This step needs a connector that isn&apos;t live yet. Remove it to save.</p>
-        ) : (
-          d.fields.map((f) => field(f, a.config[f.key], (v) => setActionConfig(selected.index, f.key, v), selected.index))
+        {d.connector && !connected.includes(d.connector) && (
+          <p className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-ink-2">
+            {d.connector === "google_calendar" ? "Each person connects their own Google Calendar. Until they do, this step is logged as an error." : "Not connected yet: this step is logged as an error until it is."}{" "}
+            <Link href={`/app/connectors/${d.connector}`} className="font-medium text-brand hover:underline">Connect</Link>
+          </p>
         )}
-        {hasText && !d.connector && (
+        {d.fields.map((f) => field(f, a.config[f.key], (v) => setActionConfig(selected.index, f.key, v), selected.index))}
+        {hasText && (
           <div>
             <div className="mb-1.5 text-xs font-medium text-ink-3">Insert into the field you&apos;re typing in</div>
             <div className="flex flex-wrap gap-1.5">
@@ -471,7 +474,6 @@ export function FlowBuilder({
                     title: d?.label ?? a.type,
                     summary: actionSummary(a),
                     icon: d?.icon ?? "bell",
-                    locked: !!d?.connector,
                     active: selected?.kind === "action" && selected.index === i,
                     onClick: () => setSelected({ kind: "action", index: i }),
                     onRemove: () => removeAction(i),

@@ -22,6 +22,7 @@ export default async function AutomationPage({ params }: { params: Promise<{ id:
   const data = await tenant(user, async (tx) => ({
     row: isNew ? null : await tx.one<Row>("select id, name, description, enabled, builtin, template_key, trigger, filters, actions from automations where id = $1", [id]),
     clients: await tx.q<{ id: string; name: string }>("select id, name from companies where kind = 'client' order by name"),
+    connected: (await tx.q<{ provider: string }>("select distinct provider from connections where status = 'active'")).map((r) => r.provider),
     runs: isNew
       ? []
       : await tx.q<{ id: string; status: string; summary: string; created_at: Date }>("select id, status, summary, created_at from automation_runs where automation_id = $1 order by created_at desc limit 20", [id]),
@@ -108,6 +109,7 @@ export default async function AutomationPage({ params }: { params: Promise<{ id:
         flow: { trigger: row?.trigger?.type ? row.trigger : null, filters: row?.filters ?? [], actions: row?.actions ?? [] },
       }}
       clients={data.clients}
+      connected={data.connected}
       templateKey={row?.template_key}
       saveAction={saveAutomationAction}
       deleteAction={row ? deleteAutomationAction : undefined}

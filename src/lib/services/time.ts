@@ -1,4 +1,5 @@
 import type { Tx } from "../db";
+import { meetingsFor } from "../connectors/meetings";
 import { todayIn } from "../domain/dates";
 import { syncUnbilledTime, unbillTimeEntry } from "./billing";
 import { agencySettings, rateFor, recordActivity, UserError } from "./core";
@@ -190,6 +191,8 @@ export interface TimeSuggestion {
   reason: string;
   out_of_scope: boolean;
   has_change_request: boolean;
+  /** Pre-filled time note (meeting titles), so the entry says what it was. */
+  notes?: string;
 }
 
 /**
@@ -206,8 +209,39 @@ export async function timesheetSuggestions(tx: Tx, userId: string, date: string)
     [userId, date],
   );
   const loggedTotal = logged.reduce((s, r) => s + r.hours, 0);
-  const remaining = Math.max(0, dayHours - loggedTotal);
-  if (remaining < 0.25) return [];
+  const loggedJobs = new Set(logged.map((l) => l.job_id));
+
+  // Meetings from the person's connected calendar or Zoom, already matched to a job.
+  const meetingRows = (await meetingsFor(tx, userId, date)).filter((m) => !loggedJobs.has(m.job_id));
+  const byJob = new Map<string, { minutes: number; titles: string[]; sources: Set<string> }>();
+  for (const m of meetingRows) {
+    const g = byJob.get(m.job_id) ?? { minutes: 0, titles: [], sources: new Set<string>() };
+    g.minutes += m.minutes;
+    g.titles.push(m.title);
+    g.sources.add(m.source);
+    byJob.set(m.job_id, g);
+  }
+  const meetingJobs = byJob.size
+    ? await tx.q<{ id: string; number: string; name: string }>("select id, number, name from jobs where id = any($1)", [[...byJob.keys()]])
+    : [];
+  const meetings: TimeSuggestion[] = meetingJobs.map((j) => {
+    const g = byJob.get(j.id)!;
+    return {
+      job_id: j.id,
+      task_id: null,
+      job_number: j.number,
+      job_name: j.name,
+      task_title: null,
+      hours: Math.max(0.25, Math.round((g.minutes / 60) * 4) / 4),
+      reason: `had ${g.titles.length > 1 ? `${g.titles.length} meetings (${g.minutes} min)` : `a ${g.minutes}-min meeting`}: ${g.titles.join(", ")} (${[...g.sources].join(", ")})`,
+      out_of_scope: false,
+      has_change_request: false,
+      notes: g.titles.join("; ").slice(0, 300),
+    };
+  });
+
+  const remaining = Math.max(0, dayHours - loggedTotal - meetings.reduce((s, m) => s + m.hours, 0));
+  if (remaining < 0.25) return meetings;
 
   const activity = await tx.q<{ job_id: string; task_id: string | null; n: number; kinds: string[] }>(
     `select a.job_id, a.task_id, count(*)::int as n, array_agg(distinct a.kind) as kinds
@@ -219,8 +253,8 @@ export async function timesheetSuggestions(tx: Tx, userId: string, date: string)
     [userId, date],
   );
   const loggedKeys = new Set(logged.map((l) => `${l.job_id}:${l.task_id ?? ""}`));
-  const candidates = activity.filter((a) => !loggedKeys.has(`${a.job_id}:${a.task_id ?? ""}`));
-  if (!candidates.length) return [];
+  const candidates = activity.filter((a) => !loggedKeys.has(`${a.job_id}:${a.task_id ?? ""}`) && !(byJob.has(a.job_id) && !a.task_id));
+  if (!candidates.length) return meetings;
   const totalWeight = candidates.reduce((s, c) => s + c.n, 0);
 
   const meta = await tx.q<{ job_id: string; task_id: string | null; job_number: string; job_name: string; task_title: string | null; out_of_scope: boolean; change_request_id: string | null }>(
@@ -240,7 +274,7 @@ export async function timesheetSuggestions(tx: Tx, userId: string, date: string)
     "feedback.added": "left feedback",
     "deliverable.sent": "sent for client review",
   };
-  return candidates
+  const fromActivity = candidates
     .map((c) => {
       const m = meta.find((x) => x.job_id === c.job_id && (x.task_id ?? null) === (c.task_id ?? null)) ?? meta.find((x) => x.job_id === c.job_id)!;
       // Split the unlogged part of the day by activity, but never suggest more
@@ -260,6 +294,7 @@ export async function timesheetSuggestions(tx: Tx, userId: string, date: string)
       };
     })
     .sort((a, b) => b.hours - a.hours);
+  return [...meetings, ...fromActivity];
 }
 
 export async function weekEntries(tx: Tx, userId: string, from: string, to: string) {

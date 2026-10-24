@@ -1,38 +1,37 @@
-import {
-  ArrowsClockwise, Calculator, CalendarBlank, ChartBar, CheckCircle, CreditCard, DropboxLogo, EnvelopeSimple, FigmaLogo, GoogleDriveLogo, GoogleLogo, Handshake,
-  Lightning, LinkedinLogo, MegaphoneSimple, MetaLogo, MicrosoftOutlookLogo, MicrosoftTeamsLogo, PaintBrush, Plugs, Plus, ShieldCheck, SlackLogo, TiktokLogo,
-  VideoCamera, WebhooksLogo, WhatsappLogo,
-} from "@phosphor-icons/react/ssr";
+import { ArrowsClockwise, CaretRight, CheckCircle, Lightning, Plugs, Plus, ShieldCheck, WarningCircle } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
+import { ConnectorIcon } from "@/components/ConnectorIcon";
 import { Stagger } from "@/components/Motion";
 import { SubmitButton } from "@/components/SubmitButton";
 import { Badge, PageHeader, buttonClass, cx } from "@/components/ui";
 import { toggleConnectorRequestAction } from "../_actions/connectors";
 import { requireUser, tenant } from "@/lib/auth";
-import { CONNECTORS, PHASES, type ConnectorDef, type ConnectorIcon } from "@/lib/domain/connectors";
+import { PROVIDERS } from "@/lib/connectors/providers";
+import { CONNECTORS, PHASES, type ConnectorDef } from "@/lib/domain/connectors";
 
 export const metadata = { title: "Connectors" };
 
-const ICONS: Record<ConnectorIcon, typeof GoogleLogo> = {
-  gmail: GoogleLogo, calendar: CalendarBlank, outlook: MicrosoftOutlookLogo, slack: SlackLogo, whatsapp: WhatsappLogo, teams: MicrosoftTeamsLogo,
-  drive: GoogleDriveLogo, dropbox: DropboxLogo, figma: FigmaLogo, canva: PaintBrush, meta: MetaLogo, google_ads: MegaphoneSimple, linkedin: LinkedinLogo,
-  analytics: ChartBar, tiktok: TiktokLogo, hubspot: Handshake, mailchimp: EnvelopeSimple, klaviyo: EnvelopeSimple, xero: Calculator, quickbooks: Calculator,
-  sage: Calculator, payments: CreditCard, zoom: VideoCamera, webhooks: WebhooksLogo, zapier: Lightning,
-};
+const BUILT = new Set(PROVIDERS.map((p) => p.catalog));
 
 const CATEGORIES = [...new Set(CONNECTORS.map((c) => c.category))];
 
-function ConnectorCard({ c, requested }: { c: ConnectorDef; requested: boolean }) {
-  const Icon = ICONS[c.icon];
+type State = "connected" | "reauth" | null;
+
+function ConnectorCard({ c, requested, state }: { c: ConnectorDef; requested: boolean; state: State }) {
+  const built = BUILT.has(c.key);
   return (
     <li id={c.key} data-stagger className="flex scroll-mt-24 flex-col rounded-xl border border-line bg-surface p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
-        <span className="grid h-11 w-11 place-items-center rounded-xl border border-line bg-surface-2/60 text-ink">
-          <Icon aria-hidden size={22} weight="duotone" />
-        </span>
-        <Badge tone={c.phase === 1 ? "brand" : c.phase === 2 ? "info" : "neutral"} dot>
-          {PHASES[c.phase].label}
-        </Badge>
+        <ConnectorIcon icon={c.icon} />
+        {state === "connected" ? (
+          <Badge tone="good" dot>Connected</Badge>
+        ) : state === "reauth" ? (
+          <Badge tone="critical" dot>Reconnect</Badge>
+        ) : built ? (
+          <Badge tone="brand" dot>Available</Badge>
+        ) : (
+          <Badge dot>{PHASES[c.phase].label}</Badge>
+        )}
       </div>
       <h3 className="mt-3 font-semibold">{c.name}</h3>
       <p className="mt-1 text-sm text-ink-2">{c.summary}</p>
@@ -44,32 +43,48 @@ function ConnectorCard({ c, requested }: { c: ConnectorDef; requested: boolean }
           </li>
         ))}
       </ul>
-      <form action={toggleConnectorRequestAction} className="mt-4">
-        <input type="hidden" name="connector" value={c.key} />
-        <SubmitButton aria-pressed={requested} className={cx(buttonClass(requested ? "secondary" : "ghost", "sm"), "w-full", requested ? "!text-good-ink" : "border border-dashed border-line")}>
-          {requested ? (
-            <>
-              <CheckCircle aria-hidden size={14} weight="fill" /> Requested by your agency
-            </>
-          ) : (
-            <>
-              <Plus aria-hidden size={14} weight="bold" /> We want this
-            </>
-          )}
-        </SubmitButton>
-      </form>
+      {built ? (
+        <Link href={`/app/connectors/${c.key}`} className={cx(buttonClass(state ? "secondary" : "primary", "sm"), "mt-4 w-full")}>
+          {state === "reauth" ? <WarningCircle aria-hidden size={14} /> : state ? null : <Plugs aria-hidden size={14} />}
+          {state === "connected" ? "Manage" : state === "reauth" ? "Reconnect" : "Connect"}
+          <CaretRight aria-hidden size={12} weight="bold" />
+        </Link>
+      ) : (
+        <form action={toggleConnectorRequestAction} className="mt-4">
+          <input type="hidden" name="connector" value={c.key} />
+          <SubmitButton aria-pressed={requested} className={cx(buttonClass(requested ? "secondary" : "ghost", "sm"), "w-full", requested ? "!text-good-ink" : "border border-dashed border-line")}>
+            {requested ? (
+              <>
+                <CheckCircle aria-hidden size={14} weight="fill" /> Requested by your agency
+              </>
+            ) : (
+              <>
+                <Plus aria-hidden size={14} weight="bold" /> We want this
+              </>
+            )}
+          </SubmitButton>
+        </form>
+      )}
     </li>
   );
 }
 
 export default async function ConnectorsPage() {
   const user = await requireUser();
-  const requested = new Set((await tenant(user, (tx) => tx.q<{ connector: string }>("select connector from connector_requests"))).map((r) => r.connector));
+  const data = await tenant(user, async (tx) => ({
+    requested: new Set((await tx.q<{ connector: string }>("select connector from connector_requests")).map((r) => r.connector)),
+    // Agency-wide connections, plus the signed-in person's own (calendars, Zoom).
+    conns: await tx.q<{ provider: string; status: string }>("select provider, status from connections where user_id is null or user_id = $1", [user.id]),
+  }));
+  const state = (key: string): State => {
+    const mine = data.conns.filter((x) => PROVIDERS.find((p) => p.key === x.provider)?.catalog === key);
+    return mine.some((x) => x.status === "needs_reauth") ? "reauth" : mine.length ? "connected" : null;
+  };
   return (
     <>
       <PageHeader
         title="Connectors"
-        subtitle="Bring the tools your agency already uses into 8gency. Connectors are on the roadmap: tell us which ones you need and we'll build those first."
+        subtitle="Bring the tools your agency already uses into 8gency: email, calendars, Slack, WhatsApp, accounting, ad platforms, files and payments."
         actions={
           <Link href="/app/automations" className={buttonClass("secondary")}>
             <Lightning aria-hidden size={16} /> Automations
@@ -77,7 +92,7 @@ export default async function ConnectorsPage() {
         }
       />
 
-      <section aria-label="How connectors will work" className="mb-6 grid gap-3 md:grid-cols-3">
+      <section aria-label="How connectors work" className="mb-6 grid gap-3 md:grid-cols-3">
         {[
           { icon: Plugs, title: "Connect once", body: "Sign in with Google, Microsoft, Slack or Xero. Access is encrypted, limited to what each feature needs, and can be disconnected any time." },
           { icon: ArrowsClockwise, title: "Mapped to your work", body: "Emails, meetings, files and ad spend are matched to the right client and job, so they show up where the work is." },
@@ -111,7 +126,7 @@ export default async function ConnectorsPage() {
             </h2>
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {CONNECTORS.filter((c) => c.category === cat).map((c) => (
-                <ConnectorCard key={c.key} c={c} requested={requested.has(c.key)} />
+                <ConnectorCard key={c.key} c={c} requested={data.requested.has(c.key)} state={state(c.key)} />
               ))}
             </ul>
           </section>

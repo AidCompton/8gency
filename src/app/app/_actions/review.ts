@@ -2,6 +2,7 @@
 import { act, num, opt, str, withParam } from "@/lib/actions";
 import { requireUser, tenant } from "@/lib/auth";
 import { assertCan } from "@/lib/permissions";
+import { fetchFromLink } from "@/lib/connectors/files";
 import { addFeedback, clientDecision, createDeliverable, internalDecision, sendForInternalReview, sendToClient, uploadVersion } from "@/lib/services/review";
 import { UserError } from "@/lib/services/core";
 
@@ -24,8 +25,11 @@ export async function uploadVersionAction(fd: FormData) {
   await act(`/app/deliverables/${id}`, () =>
     tenant(user, async (tx) => {
       const file = fd.get("file");
-      if (!(file instanceof File)) throw new UserError("Choose a file.");
-      await uploadVersion(tx, id, file, str(fd, "notes"));
+      if (file instanceof File && file.size > 0) return void (await uploadVersion(tx, id, file, str(fd, "notes")));
+      if (!str(fd, "link")) throw new UserError("Choose a file, or paste a Drive, Dropbox or Figma link.");
+      // Proof straight from where the work lives (connected Drive, Dropbox or Figma).
+      const f = await fetchFromLink(tx, str(fd, "link"));
+      await uploadVersion(tx, id, new File([new Uint8Array(f.bytes)], f.name, { type: f.type }), str(fd, "notes") || `From ${new URL(str(fd, "link")).hostname.replace(/^www\./, "")}`);
     }),
   "New version uploaded.");
 }

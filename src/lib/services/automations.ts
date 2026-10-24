@@ -68,14 +68,15 @@ export async function runAutomations(tx: Tx) {
     for (const w of waiting) {
       const days = daysBetween(w.sent_to_client_at.toISOString().slice(0, 10), today);
       const key = `chase:${w.id}:${today}`;
-      const already = await tx.one("select 1 from outbox_messages where related_type = 'deliverable_chase' and subject = $1", [key]);
+      const already = await tx.one("select 1 from outbox_messages where related_type = 'deliverable_chase' and (payload->>'dedupe' = $1 or subject = $1)", [key]);
       if (already) continue;
       const link = appUrl(`/hub/${await ensureHubToken(tx, w.contact_id)}/review/${w.id}`);
       await queueMessage(tx, {
         channel: "email",
         toName: w.contact_name,
         to: w.email,
-        subject: key,
+        subject: `Waiting for your review: ${w.name}`,
+        payload: { dedupe: key },
         body: `Hi ${firstName(w.contact_name)}, a gentle reminder that “${w.name}” has been waiting for your review for ${days} days. You can approve or comment here: ${link}`,
         relatedType: "deliverable_chase",
         relatedId: w.id,
@@ -151,6 +152,7 @@ export async function runAutomations(tx: Tx) {
       });
     }
   }
+
   if (on.has("retainer_alerts")) await checkRetainerAlerts(tx);
   if (on.has("collections")) await runCollections(tx);
   await tx.q("update automations set last_run_at = now() where builtin = any($1::text[])", [[...on]]);
@@ -189,7 +191,6 @@ export function validateFlow(flow: FlowDef): FlowDef {
   const actions = flow.actions.map((s, i) => {
     const d = actionDef(s.type);
     if (!d) throw new UserError(`Step ${i + 1} isn't a recognised action.`);
-    if (d.connector) throw new UserError(`${d.label} needs a connector that isn't available yet. Remove that step to save.`);
     return { type: d.type, config: clean(d.fields, s.config, d.label) };
   });
   return { trigger, filters, actions };

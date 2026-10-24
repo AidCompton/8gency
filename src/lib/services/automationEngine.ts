@@ -1,3 +1,4 @@
+import { activeConnection } from "../connectors/connections";
 import type { Tx } from "../db";
 import { BUILTINS, actionDef, triggerDef, type Condition, type Step } from "../domain/automations";
 import { addDays, daysBetween, todayIn } from "../domain/dates";
@@ -7,6 +8,7 @@ import { agencySettings, appUrl, ensureHubToken, notify, queueMessage, usersWith
 
 // Runs custom automations (trigger → filters → actions) built in /app/automations.
 // Kept free of other service imports so any service can fire events into it.
+// Steps that reach outside 8gency only queue: the connector worker delivers.
 
 type RecordType = "job" | "deliverable" | "invoice" | "change_request" | "client_request" | "task";
 
@@ -130,7 +132,6 @@ async function teamIds(tx: Tx, ctx: Ctx, who: string): Promise<(string | null)[]
 async function execute(tx: Tx, a: AutomationRow, step: Step, ctx: Ctx, vars: Record<string, string>, n: number, recordKey: string): Promise<string> {
   const def = actionDef(step.type);
   if (!def) throw new Error(`Unknown action "${step.type}".`);
-  if (def.connector) throw new Error(`${def.label} needs the ${def.connector.replace(/_/g, " ")} connector, which isn't connected yet.`);
   const c = step.config;
   if (step.type === "notify") {
     const ids = [...new Set((await teamIds(tx, ctx, String(c.to))).filter(Boolean))] as string[];
@@ -138,8 +139,9 @@ async function execute(tx: Tx, a: AutomationRow, step: Step, ctx: Ctx, vars: Rec
     await notify(tx, ids, { kind: "automation", title: render(c.message, vars) || a.name, body: a.name, href: ctx.href, dedupe: `auto:${a.id}:${recordKey}:${n}` });
     return `Notified ${ids.length} ${ids.length === 1 ? "person" : "people"}`;
   }
-  if (step.type === "email_client" || step.type === "whatsapp_client") {
-    const email = step.type === "email_client";
+  if (step.type === "gmail_send" && !(await activeConnection(tx, "gmail"))) throw new Error("Gmail isn't connected (Connectors › Gmail).");
+  if (step.type === "email_client" || step.type === "whatsapp_client" || step.type === "gmail_send") {
+    const email = step.type !== "whatsapp_client";
     const contacts = (await clientContacts(tx, ctx, String(c.to))).filter((k) => (email ? k.email : k.phone));
     if (!contacts.length) throw new Error(`No ${String(c.to)} contact at ${ctx.company_name || "the client"} with ${email ? "an email address" : "a WhatsApp number"}.`);
     for (const k of contacts) {
@@ -152,9 +154,44 @@ async function execute(tx: Tx, a: AutomationRow, step: Step, ctx: Ctx, vars: Rec
         body: render(c.body, v),
         relatedType: "automation",
         relatedId: a.id,
+        via: step.type === "gmail_send" ? "gmail" : undefined,
       });
     }
     return `${email ? "Emailed" : "WhatsApp'd"} ${contacts.map((k) => firstName(k.name)).join(", ")}`;
+  }
+  if (step.type === "slack_message") {
+    const slack = await activeConnection(tx, "slack");
+    if (!slack) throw new Error("Slack isn't connected (Connectors › Slack).");
+    const mapped = c.channel === "client" && ctx.company_id
+      ? await tx.one<{ external_id: string; external_label: string }>("select external_id, external_label from connection_mappings where connection_id = $1 and company_id = $2 limit 1", [slack.id, ctx.company_id])
+      : null;
+    const channel = mapped ?? (slack.settings.default_channel ? { external_id: String(slack.settings.default_channel), external_label: String(slack.settings.default_channel_label ?? "") } : null);
+    if (!channel) throw new Error(`No Slack channel for ${ctx.company_name || "this client"}, and no default channel set.`);
+    const text = `${render(c.message, vars)}\n<${appUrl(ctx.href)}|Open in 8gency>`;
+    await queueMessage(tx, { channel: "slack", toName: channel.external_label, to: channel.external_id, body: text, relatedType: "automation", relatedId: a.id });
+    return `Posted to ${channel.external_label || "Slack"}`;
+  }
+  if (step.type === "calendar_event") {
+    const userId = c.who === "job_owner" ? ctx.owner_id : ctx.account_manager_id;
+    const person = userId ? await tx.one<{ id: string; name: string; email: string }>("select id, name, email from users where id = $1 and active", [userId]) : null;
+    if (!person) throw new Error(`There's no ${c.who === "job_owner" ? "job owner" : "account manager"} to book this for.`);
+    if (!(await activeConnection(tx, "google_calendar", person.id))) throw new Error(`${person.name} hasn't connected Google Calendar (Connectors › Google Calendar).`);
+    const settings = await agencySettings(tx);
+    const time = /^\d{1,2}:\d{2}$/.test(String(c.time)) ? String(c.time) : "10:00";
+    const start = zonedIso(addDays(todayIn(settings.timezone), Number(c.in_days) || 0), time, settings.timezone);
+    const invitees = c.invite && c.invite !== "none" ? (await clientContacts(tx, ctx, String(c.invite))).map((k) => k.email).filter(Boolean) : [];
+    const title = render(c.title, vars).slice(0, 200) || a.name;
+    await queueMessage(tx, {
+      channel: "calendar",
+      toName: person.name,
+      to: person.email,
+      subject: title,
+      body: render(c.notes, vars),
+      relatedType: "automation",
+      relatedId: a.id,
+      payload: { user_id: person.id, start, minutes: Number(c.minutes) || 30, attendees: invitees },
+    });
+    return `Booked “${title}” on ${firstName(person.name)}'s calendar`;
   }
   if (step.type === "create_task") {
     if (!ctx.job_id) throw new Error("This trigger isn't tied to a job, so there's nowhere to add the task.");
@@ -174,6 +211,14 @@ async function execute(tx: Tx, a: AutomationRow, step: Step, ctx: Ctx, vars: Rec
     return `Created task “${title}”`;
   }
   throw new Error(`Unknown action "${step.type}".`);
+}
+
+/** A wall-clock time in a time zone, as an ISO instant. */
+export function zonedIso(date: string, time: string, tz: string) {
+  const [h, m] = time.split(":").map(Number);
+  const guess = new Date(`${date}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`);
+  const offset = new Date(guess.toLocaleString("en-US", { timeZone: tz })).getTime() - new Date(guess.toLocaleString("en-US", { timeZone: "UTC" })).getTime();
+  return new Date(guess.getTime() - offset).toISOString();
 }
 
 /** Run one automation for one record. A failing action rolls back only this run (savepoint) and is logged. */

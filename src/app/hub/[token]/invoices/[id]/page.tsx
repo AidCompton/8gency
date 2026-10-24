@@ -1,14 +1,20 @@
-import { ArrowLeft } from "@phosphor-icons/react/ssr";
+import { ArrowLeft, CreditCard } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { InvoicePaper, PaperLines, PaperTotals } from "@/components/InvoicePaper";
 import { PrintButton } from "@/components/PrintButton";
-import { Money } from "@/components/ui";
+import { SubmitButton } from "@/components/SubmitButton";
+import { Money, buttonClass } from "@/components/ui";
+import { payOptions, type PayProvider } from "@/lib/connectors/payments";
+import { hubPayAction } from "../../actions";
+
+const PAY_LABEL: Record<PayProvider, string> = { payfast: "PayFast", paystack: "Paystack", stripe: "card (Stripe)" };
 import { formatDate } from "@/lib/domain/dates";
 import { asContact, resolveHubToken } from "@/lib/services/hub";
 
-export default async function HubInvoice({ params }: { params: Promise<{ token: string; id: string }> }) {
+export default async function HubInvoice({ params, searchParams }: { params: Promise<{ token: string; id: string }>; searchParams: Promise<{ paid?: string }> }) {
   const { token, id } = await params;
+  const { paid } = await searchParams;
   const contact = await resolveHubToken(token);
   if (!contact || !["billing", "approver"].includes(contact.role)) notFound();
   const data = await asContact(contact, async (tx) => {
@@ -20,11 +26,12 @@ export default async function HubInvoice({ params }: { params: Promise<{ token: 
     return {
       inv,
       lines: await tx.q<{ id: string; description: string; quantity: number; unit_cents: number; amount_cents: number }>("select id, description, quantity, unit_cents, amount_cents from invoice_lines where invoice_id = $1 order by sort", [id]),
+      pay: await payOptions(tx),
       entity: (await tx.one<{ name: string; legal_name: string; tax_number: string; registration_number: string; address: string; bank_details: string }>("select name, legal_name, tax_number, registration_number, address, bank_details from entities where id = $1", [inv.entity_id]))!,
     };
   });
   if (!data) notFound();
-  const { inv, lines, entity } = data;
+  const { inv, lines, entity, pay } = data;
   const due = inv.total_cents - inv.paid_cents;
   return (
     <div className="space-y-4">
@@ -67,7 +74,24 @@ export default async function HubInvoice({ params }: { params: Promise<{ token: 
           ]}
         />
       </InvoicePaper>
-      <p className="no-print text-center text-xs text-ink-3">Pay by EFT using the details above, with the invoice number as your reference.</p>
+      {inv.status === "sent" && due > 0 && pay.length > 0 && (
+        <div className="no-print flex flex-col items-center gap-2">
+          {paid ? (
+            <p className="rounded-lg bg-good/10 px-4 py-2 text-sm text-good-ink">Thank you. Your payment is being confirmed and this invoice will show as paid shortly.</p>
+          ) : (
+            <form action={hubPayAction} className="flex flex-wrap justify-center gap-2">
+              <input type="hidden" name="token" value={token} />
+              <input type="hidden" name="invoice_id" value={id} />
+              {pay.map((p, i) => (
+                <SubmitButton key={p} name="provider" value={p} className={buttonClass(i === 0 ? "primary" : "secondary")}>
+                  <CreditCard aria-hidden size={16} /> Pay <Money cents={due} currency={inv.currency} /> {pay.length > 1 && `with ${PAY_LABEL[p]}`}
+                </SubmitButton>
+              ))}
+            </form>
+          )}
+        </div>
+      )}
+      <p className="no-print text-center text-xs text-ink-3">{pay.length > 0 && inv.status === "sent" ? "Or pay" : "Pay"} by EFT using the details above, with the invoice number as your reference.</p>
     </div>
   );
 }

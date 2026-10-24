@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Tx } from "../db";
 import { addDays, daysBetween, formatShort, todayIn } from "../domain/dates";
+import { clientResults } from "../connectors/ads";
+import { formatMoney } from "../domain/money";
 import { agencySettings } from "./core";
 import { listRetainers } from "./retainers";
 
@@ -88,6 +90,16 @@ export async function draftStatusReport(tx: Tx, companyId: string): Promise<Draf
     lines.push(``, `Retainer`);
     for (const r of retainers) lines.push(`• ${r.retainer.name}: ${r.usedHours}h of ${r.allocated}h used this month`);
   }
+  const results = await clientResults(tx, companyId, today);
+  if (results.ads.length || results.web) {
+    lines.push(``, `Results, last 7 days`);
+    for (const a of results.ads) lines.push(`• ${a.platform}: ${formatMoney(a.spend, a.currency || "ZAR")} spent, ${a.clicks.toLocaleString("en-ZA")} clicks${a.conversions ? `, ${Math.round(a.conversions).toLocaleString("en-ZA")} conversions` : ""}`);
+    if (results.web) {
+      const w = results.web;
+      const change = (now: number, before: number) => (before ? ` (${now >= before ? "+" : ""}${Math.round(((now - before) / before) * 100)}%)` : "");
+      lines.push(`• Website: ${w.users.toLocaleString("en-ZA")} visitors${change(w.users, w.prev.users)}, ${w.sessions.toLocaleString("en-ZA")} sessions${change(w.sessions, w.prev.sessions)}, ${w.key_events.toLocaleString("en-ZA")} key events${change(w.key_events, w.prev.key_events)}`);
+    }
+  }
   if (upcoming.length) {
     lines.push(``, `Coming up next week`);
     for (const u of upcoming) lines.push(`• ${u.title} (${u.job_number}) — ${formatShort(u.due_date)}`);
@@ -99,6 +111,8 @@ export async function draftStatusReport(tx: Tx, companyId: string): Promise<Draf
     `${jobs.length} live jobs and their tasks`,
     `${waiting.length} items in client review, ${crs.length} change requests awaiting approval`,
     ...(retainers.length ? [`retainer burn for ${retainers.map((r) => r.retainer.name).join(", ")}`] : []),
+    ...results.ads.map((a) => `${a.platform} spend synced from the connected ad account`),
+    ...(results.web ? [`Google Analytics 4 (${results.web.property})`] : []),
   ];
   if (!settings.ai_enabled) return { text: template, sources, generatedBy: "8gent-template" };
   const polished = await polishWithClaude(

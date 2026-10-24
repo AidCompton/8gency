@@ -1,6 +1,23 @@
 # 8gency connectors: integration plan
 
-Status: proposal · Owner: product + engineering · In-app catalogue: `/app/connectors` (data in `src/lib/domain/connectors.ts`)
+Status: Phases 0–2 built (October 2026), awaiting app registration and live testing · Owner: product + engineering · In-app catalogue: `/app/connectors` (data in `src/lib/domain/connectors.ts`, code in `src/lib/connectors/`)
+
+## Build status
+
+| Piece | Where | Notes |
+|---|---|---|
+| Connections, token vault, OAuth | `migrations/006_connectors.sql`, `src/lib/vault.ts`, `src/lib/connectors/connections.ts`, `/api/connectors/*` | AES-256-GCM under `CONNECTOR_SECRET_KEY` (KMS envelope encryption still to do). One OAuth callback for every provider; state is signed and bound to the browser. |
+| Sync worker | `src/lib/connectors/sync.ts`, run by `/api/cron` and "Sync now" | `sync_jobs` was folded into `connections` (`cursor`, `next_sync_at`, `failures`): each connection syncs every 15 minutes in its own transaction, backing off to 6 hours on failure. Token refresh commits separately so rotated refresh tokens (Xero) are never lost. |
+| Outbox delivery | `src/lib/connectors/delivery.ts` | Gmail, Outlook, WhatsApp (template fallback outside 24h), Slack, Google Calendar events. Unconnected channels wait in the Outbox. |
+| Automations | `slack_message`, `gmail_send`, `calendar_event` | Unlocked; each queues to the Outbox. |
+| Timesheets | `src/lib/connectors/meetings.ts` | Google Calendar (incl. Meet), Outlook/Teams and Zoom meetings matched to a job by job number, attendee email/domain or client name. |
+| Accounting | `src/lib/connectors/accounting.ts` | Xero and QuickBooks: push issued invoices, pull paid share back into `recordPayment`. |
+| Ads and analytics | `src/lib/connectors/ads.ts` | Meta and Google Ads daily spend → re-billable costs (one per day, updated until invoiced), monthly budget alerts; GA4 weekly results. Both feed status reports. |
+| CRM | `src/lib/connectors/hubspot.ts` | Closed-won deals → client, contacts, job from a chosen template. |
+| Files | `src/lib/connectors/files.ts` | Drive, Dropbox and Figma links as proof versions; approved finals filed to a client folder (Drive, Dropbox). |
+| Payments | `src/lib/connectors/payments.ts` | PayFast, Paystack, Stripe pay-now in the hub; signed webhooks record the payment once. |
+
+Not built from this plan: Gmail reply capture (needs restricted-scope verification), Slack message shortcut for client requests, Xero contacts/tax-rate sync and credit notes, HubSpot two-way contact sync, Figma comment sync, Zoom actual (vs scheduled) duration and recordings.
 
 ## Why
 

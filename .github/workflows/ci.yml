@@ -26,6 +26,8 @@ jobs:
       APP_URL: http://localhost:3000
       UPLOAD_DIR: ./uploads
       INBOUND_WEBHOOK_SECRET: ci-secret-value
+      # Test-only key for the connector vault (32 bytes, base64).
+      CONNECTOR_SECRET_KEY: Y2ktb25seS1jb25uZWN0b3Ita2V5LTMyLWJ5dGVzISE=
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

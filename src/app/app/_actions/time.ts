@@ -60,6 +60,7 @@ export async function confirmSuggestionsAction(fd: FormData) {
           work_date: date,
           hours,
           source: "suggestion",
+          notes: s.notes,
           oos_resolution: s.out_of_scope && !s.has_change_request ? "change_request" : undefined,
         });
       }

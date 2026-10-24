@@ -38,7 +38,7 @@ export default async function TimePage({ searchParams }: { searchParams: Promise
   const elapsedWorkdays = workingDays(week, addDays(week, 6) < today ? addDays(week, 6) : today);
   return (
     <>
-      <PageHeader title="Time" subtitle="Confirm your day in a couple of minutes. Suggestions come only from your own activity in 8gency and are visible only to you until you confirm them." />
+      <PageHeader title="Time" subtitle="Confirm your day in a couple of minutes. Suggestions come from your own activity in 8gency and your connected calendar or Zoom, and only you see them until you confirm." />
       <div className="mb-4 flex items-center gap-2">
         <Link className={buttonClass("ghost", "sm")} href={`/app/time?day=${addDays(week, -7)}`}><CaretLeft aria-hidden size={14} /> Prev week</Link>
         <Link className={buttonClass("ghost", "sm")} href="/app/time">This week</Link>
@@ -77,7 +77,7 @@ export default async function TimePage({ searchParams }: { searchParams: Promise
                 })}
                 <SubmitButton className={buttonClass("primary", "sm")}>Confirm {formatShort(day)}</SubmitButton>
               </form>
-            ) : <p className="text-sm text-ink-3">No suggestions: either your day is logged, or there's no 8gency activity to build from yet. Starting a timer from My Day captures time as you go.</p>}
+            ) : <p className="text-sm text-ink-3">No suggestions: either your day is logged, or there's no activity to build from yet. Starting a timer from My Day captures time as you go, and <Link href="/app/connectors/google_calendar" className="text-brand hover:underline">connecting your calendar</Link> turns client meetings into suggestions.</p>}
           </Card>
           <Card title={`Logged on ${formatShort(day)}`} pad={false}>
             <Table head={["Job", "Task / notes", "Category", "Hours", ""]} empty="Nothing logged this day.">

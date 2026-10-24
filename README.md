@@ -81,16 +81,17 @@ Every module traces back to problem IDs in the blueprint (Part 2).
 | Route | Purpose |
 |---|---|
 | `POST /api/inbound/email`, `POST /api/inbound/whatsapp` | `{ from, text }` with header `x-8gency-secret`. Replies like `APPROVE 7K2QXM` or `CHANGES 7K2QXM bigger logo` act on the item when the sender matches the contact. Other messages from known contacts go to triage. |
-| `POST /api/cron` | Runs the automation library for every agency (same secret). Schedule it every 15 minutes. |
+| `POST /api/cron` | Runs automations, connector syncs and Outbox delivery for every agency (same secret). Schedule it every 5–15 minutes. |
+| `GET /api/connectors/{provider}/connect`, `GET /api/connectors/oauth/callback` | OAuth sign-in for connectors. Register `$APP_URL/api/connectors/oauth/callback` with each provider. |
+| `POST /api/connectors/{whatsapp,stripe,paystack,payfast}/webhook?a={agency}` | Provider webhooks, verified against that agency's stored secret. The URL is shown on each connector's page. |
 | `GET /api/export/all`, `/time`, `/xero?from=&to=` | Data exports, permission-filtered and audit-logged. |
 
 ## What's not done yet (be clear with design partners)
 
-- **Email and WhatsApp delivery.** Messages are written to an outbox (visible at `/app/outbox`), but no provider is connected. WhatsApp needs a Meta-verified business account and approved message templates. Inbound needs a provider adapter in front of `/api/inbound/*`.
-- **Accounting.** There's only a Xero-format CSV export; there's no two-way sync. Check the column names, account codes and tax types against Xero's current import template before relying on it.
-- **Payments.** Invoices show EFT details only. No PayFast, Paystack or Stripe links yet.
+- **Connectors** (`/app/connectors`, code in `src/lib/connectors/`) are built for Gmail, Google Calendar, Microsoft 365, Slack, WhatsApp Business, Xero, QuickBooks, Meta Ads, Google Ads, GA4, HubSpot, Google Drive, Dropbox, Figma, Zoom, PayFast, Paystack and Stripe, and tested against stubbed APIs (`tests/connectors.test.ts`). Each still needs its OAuth app registered (see `.env.example`) and a live test with a real account. Gmail send-only and Drive need Google's app verification; WhatsApp needs a Meta-verified business and an approved template for messages outside the 24-hour window. Tokens are encrypted with one key from the environment: move to KMS envelope encryption before production. Gmail reply capture and two-way contact sync aren't built.
+- **Payments** are confirmed only by the provider's signed webhook, so `APP_URL` must be reachable from the internet for pay-now to close invoices.
 - **Auth.** Staff sign in with email and password. SSO (Google/Microsoft), 2FA and magic links are still to build.
-- **Importers.** CSV only. There are no API connectors for Asana, Monday, Harvest, Toggl or Xero.
+- **Importers.** CSV only. There are no API importers for Asana, Monday, Harvest or Toggl.
 - **AI.** Detection and estimates are rule-based heuristics, not models. Voice-note transcription, brief-from-transcript and conflicting-feedback detection are not built.
 - **Proofing.** Image pins and video timecodes work. Drawing, side-by-side compare, spec checks and delivery packs don't.
 - **Files** are stored on local disk (`UPLOAD_DIR`). Move them to S3-compatible storage before multi-server deployment.

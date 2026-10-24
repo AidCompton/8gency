@@ -91,7 +91,8 @@ export default async function DeliverablePage({ params, searchParams }: { params
                 {["draft", "changes_requested"].includes(d.status) && (
                   <form action={uploadVersionAction} className="space-y-2">
                     <input type="hidden" name="deliverable_id" value={id} />
-                    <Field label="Upload a new version"><input type="file" name="file" required /></Field>
+                    <Field label="Upload a new version"><input type="file" name="file" /></Field>
+                    <Field label="Or paste a link" hint="Google Drive, Dropbox or a Figma frame, once connected."><input name="link" type="url" placeholder="https://" /></Field>
                     <Field label="What changed?"><input name="notes" /></Field>
                     <SubmitButton className={buttonClass("secondary", "sm")}>Upload v{(latest?.number ?? 0) + 1}</SubmitButton>
                   </form>

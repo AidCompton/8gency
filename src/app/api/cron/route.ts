@@ -1,8 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { adminQuery, withTenant } from "@/lib/db";
+import { runConnectors } from "@/lib/connectors/sync";
 import { runAutomations } from "@/lib/services/automations";
 
-/** Scheduler entry point: runs the automation library for every agency. */
+/** Scheduler entry point (every few minutes): automations, then connector syncs and Outbox delivery, for every agency. */
 export async function POST(req: Request) {
   const secret = process.env.INBOUND_WEBHOOK_SECRET ?? "";
   const given = req.headers.get("x-8gency-secret") ?? "";
@@ -14,6 +15,7 @@ export async function POST(req: Request) {
   for (const a of agencies) {
     try {
       await withTenant({ agencyId: a.id, actorLabel: "automation" }, (tx) => runAutomations(tx));
+      await runConnectors(a.id);
       results.push({ agency: a.id, ok: true });
     } catch (e) {
       results.push({ agency: a.id, ok: false, error: (e as Error).message });
