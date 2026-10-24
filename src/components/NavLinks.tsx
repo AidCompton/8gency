@@ -1,6 +1,6 @@
 "use client";
 import {
-  Briefcase, Buildings, ChartLineUp, ClockCounterClockwise, Clock, Gear, House, Lightning, List, PaperPlaneTilt, Receipt, Repeat, ShieldCheck, SunHorizon, X,
+  Briefcase, Buildings, ChartLineUp, ClockCounterClockwise, Clock, Gear, House, Lightning, List, UsersThree, PaperPlaneTilt, Receipt, Repeat, ShieldCheck, SunHorizon, X,
   type Icon,
 } from "@phosphor-icons/react";
 import Link from "next/link";
@@ -9,7 +9,7 @@ import { useState, type ReactNode } from "react";
 
 // Icons live here (not in the server layout) because components can't cross the server/client boundary as props.
 const ICONS: Record<string, Icon> = {
-  home: House, myday: SunHorizon, jobs: Briefcase, clients: Buildings, scope: ShieldCheck, time: Clock,
+  home: House, myday: SunHorizon, jobs: Briefcase, clients: Buildings, scope: ShieldCheck, time: Clock, team: UsersThree,
   retainers: Repeat, billing: Receipt, pulse: ChartLineUp, automations: Lightning, settings: Gear, audit: ClockCounterClockwise, outbox: PaperPlaneTilt,
 };
 

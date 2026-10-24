@@ -1,10 +1,11 @@
 import type { Tx } from "../db";
-import { addDays, daysBetween, todayIn } from "../domain/dates";
+import { addDays, daysBetween, startOfWeek, todayIn } from "../domain/dates";
 import { runCollections } from "./billing";
 import { actionDef, FILTERS, triggerDef, type Field, type FlowDef } from "../domain/automations";
 import { agencySettings, appUrl, ensureHubToken, notify, queueMessage, UserError, usersWithRoles } from "./core";
 import { checkRetainerAlerts } from "./retainers";
 import { enabledBuiltins, runScheduledAutomations } from "./automationEngine";
+import { teamWorkload } from "./team";
 import { firstName } from "../domain/text";
 
 /**
@@ -137,6 +138,19 @@ export async function runAutomations(tx: Tx) {
     }
   }
 
+  if (on.has("burnout_watch")) {
+    // Sustained overload: tell the people who manage the team (not the person), once a week per person.
+    const managers = await usersWithRoles(tx, ["owner", "ops"]);
+    for (const p of (await teamWorkload(tx, today)).filter((p) => p.status === "overloaded")) {
+      await notify(tx, managers.filter((m) => m !== p.id), {
+        kind: "workload",
+        title: `Watch ${p.name}'s workload`,
+        body: p.reasons.slice(0, 2).join(" · "),
+        href: `/app/team?person=${p.id}#p-${p.id}`,
+        dedupe: `burnout:${p.id}:${startOfWeek(today)}`,
+      });
+    }
+  }
   if (on.has("retainer_alerts")) await checkRetainerAlerts(tx);
   if (on.has("collections")) await runCollections(tx);
   await tx.q("update automations set last_run_at = now() where builtin = any($1::text[])", [[...on]]);

@@ -8,6 +8,7 @@ import { clientHealth, dso, projectMargin, utilisation } from "../src/lib/domain
 import { formatMoney, invoiceTotals, toCents } from "../src/lib/domain/money";
 import { reconcileRetainer, retainerBurn } from "../src/lib/domain/retainer";
 import { detectOutOfScope, findVagueScope, nextRoundNeedsChangeRequest, scopeMeter } from "../src/lib/domain/scope";
+import { assessWorkload } from "../src/lib/domain/workload";
 
 test("brief score rewards complete fields and rejects placeholders", () => {
   const empty = scoreBrief({});
@@ -126,4 +127,35 @@ test("summarise makes short titles from client messages", async () => {
     "Hey team, quick one: can you also do a version of this…",
   );
   assert.equal(summarise("Swap the hero photo."), "Swap the hero photo.");
+});
+
+test("workload: who is taking on too much", () => {
+  const base = { weeklyHours: 40, pastWeeks: [38, 40, 39, 40], thisWeek: 16, thisWeekWorkdays: 2, weekendHours: 0, bookedNext14: 60, overdueTasks: 0 };
+  assert.equal(assessWorkload(base).status, "balanced");
+  assert.deepEqual(assessWorkload(base).reasons, []);
+
+  // Two of the last four weeks more than 10% over contract → overloaded, and it says why.
+  const long = assessWorkload({ ...base, pastWeeks: [40, 41, 48, 52] });
+  assert.equal(long.status, "overloaded");
+  assert.equal(long.overWeeks, 2);
+  assert.match(long.reasons[0], /Logged 48h and 52h in the last two weeks \(40h contracted\)/);
+
+  // More open work due in the next fortnight than there are hours for.
+  assert.equal(assessWorkload({ ...base, bookedNext14: 90 }).status, "stretched");
+  assert.equal(assessWorkload({ ...base, bookedNext14: 110 }).status, "overloaded");
+
+  // A hot start to this week: 30h by Tuesday.
+  assert.equal(assessWorkload({ ...base, thisWeek: 30 }).status, "overloaded");
+
+  // Weekend work and a pile of overdue tasks are warning signs on their own.
+  const weekend = assessWorkload({ ...base, weekendHours: 6 });
+  assert.equal(weekend.status, "stretched");
+  assert.match(weekend.reasons.join(" "), /6h on weekends/);
+  assert.equal(assessWorkload({ ...base, overdueTasks: 4 }).status, "stretched");
+
+  // Little logged and little booked: light (room to take more on).
+  assert.equal(assessWorkload({ ...base, pastWeeks: [10, 12, 8, 14], thisWeek: 2, bookedNext14: 10 }).status, "light");
+
+  // No contracted hours: nothing to judge against.
+  assert.equal(assessWorkload({ ...base, weeklyHours: 0 }).status, "balanced");
 });

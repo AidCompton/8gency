@@ -10,12 +10,13 @@ import { addContact, createAgencyWithOwner, createCompany, setAgencyLogo } from 
 import { createInvoice, readyToBill, recordPayment, saveDraftInvoice, sendInvoice, syncUnbilledTime, type DraftInvoiceEdit } from "../src/lib/services/billing";
 import { TEMPLATES } from "../src/lib/domain/automations";
 import { enabledBuiltins, runScheduledAutomations } from "../src/lib/services/automationEngine";
-import { saveAutomation, setAutomationEnabled, validateFlow } from "../src/lib/services/automations";
+import { saveAutomation, setAutomationEnabled, validateFlow, runAutomations } from "../src/lib/services/automations";
 import { processInbound } from "../src/lib/services/inbound";
 import { addTask, createJob, lockScope, setJobBillTime, setJobStatus } from "../src/lib/services/jobs";
 import { createRetainer, reconcilePeriod } from "../src/lib/services/retainers";
 import { clientDecision, createDeliverable, sendToClient, uploadVersion } from "../src/lib/services/review";
 import { decideChangeRequest, submitClientRequest } from "../src/lib/services/scope";
+import { teamTimesheet, teamWorkload } from "../src/lib/services/team";
 import { deleteTimeEntry, logTime, startTimer, stopTimer, timesheetSuggestions } from "../src/lib/services/time";
 
 const run = randomUUID().slice(0, 8);
@@ -468,5 +469,39 @@ describe("client channels", () => {
     const req = await asA((tx) => tx.one<{ status: string; oos_score: number }>("select status, oos_score from client_requests where body like 'While you''re at it%'"));
     assert.equal(req?.status, "new");
     assert.ok((req?.oos_score ?? 0) >= 30);
+  });
+});
+
+describe("team time and workload", () => {
+  test("managers see who did what per job and get a burnout alert for anyone overloaded", async () => {
+    const today = todayIn("Africa/Johannesburg");
+    await asA(async (tx) => {
+      const company = await createCompany(tx, { name: `Workload Client ${run}` });
+      const jobId = await readyJob(tx, company);
+      const dev = (await tx.one<{ id: string }>(
+        "insert into users (agency_id, email, name, password_hash, role, title, weekly_hours) values ($1, $2, 'Busy Dev', 'x', 'staff', 'Developer', 40) returning id",
+        [A.agencyId, `dev-${run}@test.example`],
+      ))!.id;
+      // 12h a day for the last three weeks: well over a 40h week.
+      for (let d = 1; d <= 21; d++) {
+        await tx.q("insert into time_entries (agency_id, user_id, job_id, work_date, hours, notes) values ($1, $2, $3, $4, 12, $5)", [A.agencyId, dev, jobId, addDays(today, -d), d === 1 ? "Checkout build" : ""]);
+      }
+
+      const sheet = await teamTimesheet(tx, { from: addDays(today, -7), to: today, userId: dev });
+      assert.equal(sheet.length, 1);
+      assert.equal(sheet[0].job_id, jobId);
+      assert.equal(sheet[0].hours, 84);
+      assert.deepEqual(sheet[0].notes, ["Checkout build"]);
+
+      const busy = (await teamWorkload(tx, today)).find((p) => p.id === dev)!;
+      assert.equal(busy.status, "overloaded");
+      assert.ok(busy.reasons.length > 0);
+
+      await runAutomations(tx);
+      await runAutomations(tx); // once a week, not on every run
+      const alerts = await tx.q<{ user_id: string; href: string }>("select user_id, href from notifications where kind = 'workload' and title like '%Busy Dev%'");
+      assert.deepEqual(alerts.map((a) => a.user_id), [A.userId]);
+      assert.match(alerts[0].href, new RegExp(dev));
+    });
   });
 });

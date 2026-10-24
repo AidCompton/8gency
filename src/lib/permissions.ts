@@ -24,6 +24,7 @@ export type Capability =
   | "billing"
   | "settings"
   | "manageTeam"
+  | "seeTeamTime"
   | "audit"
   | "triage";
 
@@ -39,6 +40,8 @@ const MATRIX: Record<Capability, Role[]> = {
   billing: ["owner", "ops", "finance"],
   settings: ["owner", "ops"],
   manageTeam: ["owner", "ops"],
+  // Ops and managers: everyone's time, by task, client and job, plus workload.
+  seeTeamTime: ["owner", "ops", "account", "pm"],
   audit: ["owner", "ops", "finance"],
   triage: ["owner", "ops", "account", "pm"],
 };
