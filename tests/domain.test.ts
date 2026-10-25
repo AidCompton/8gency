@@ -10,6 +10,7 @@ import { reconcileRetainer, retainerBurn } from "../src/lib/domain/retainer";
 import { detectOutOfScope, findVagueScope, nextRoundNeedsChangeRequest, scopeMeter } from "../src/lib/domain/scope";
 import { assessWorkload } from "../src/lib/domain/workload";
 import { bookingProblems } from "../src/lib/domain/bookings";
+import { channelName, findMentions, tokenize } from "../src/lib/domain/chat";
 
 test("brief score rewards complete fields and rejects placeholders", () => {
   const empty = scoreBrief({});
@@ -173,4 +174,17 @@ test("bookings: time, capacity, job budget and scope", () => {
   assert.match(bookingProblems({ date: "2026-10-23", start: "12:00", hours: 2 }, limits).join(), /passed/);
   assert.match(bookingProblems({ date: "2026-10-27", start: "18:00", hours: 2 }, limits).join(), /between 07:00 and 19:00/);
   assert.match(bookingProblems({ date: "2026-10-27", start: "13:00", hours: 1.1 }, limits).join(), /quarter hours/);
+});
+
+test("chat: mentions, formatting and channel names", () => {
+  const people = [{ id: "1", name: "Mia Botha" }, { id: "2", name: "Zanele Khumalo" }, { id: "3", name: "Mia Nel" }];
+  assert.deepEqual(findMentions("Thanks @Zanele and @Mia Botha!", people), ["2", "1"]);
+  assert.deepEqual(findMentions("@Mia can you check?", people), [], "two Mias: a first name alone is ambiguous");
+  assert.deepEqual(findMentions("email me at a@b.com", people), []);
+  assert.deepEqual(tokenize("**Launch** is _live_ at https://vela.example/launch. Nice one @Zanele `v2`", people), [
+    { t: "bold", v: "Launch" }, { t: "text", v: " is " }, { t: "italic", v: "live" }, { t: "text", v: " at " }, { t: "link", v: "https://vela.example/launch" },
+    { t: "text", v: ". Nice one " }, { t: "mention", v: "@Zanele", id: "2" }, { t: "text", v: " " }, { t: "code", v: "v2" },
+  ]);
+  assert.deepEqual(tokenize("<script>x</script>", people), [{ t: "text", v: "<script>x</script>" }]);
+  assert.equal(channelName("  #Vela Launch 2026!! "), "vela-launch-2026");
 });

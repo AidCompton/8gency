@@ -18,6 +18,7 @@ import { clientDecision, createDeliverable, sendToClient, uploadVersion } from "
 import { decideChangeRequest, submitClientRequest } from "../src/lib/services/scope";
 import { teamTimesheet, teamWorkload } from "../src/lib/services/team";
 import { cancelBooking, createBooking, declineBooking } from "../src/lib/services/bookings";
+import { channelFor, createChannel, deleteMessage, editMessage, ensureDefaults, leaveChannel, markRead, messages, openDirect, sendMessage, toggleReaction, unreadTotal } from "../src/lib/services/chat";
 import { deleteTimeEntry, logTime, startTimer, stopTimer, timesheetSuggestions } from "../src/lib/services/time";
 
 const run = randomUUID().slice(0, 8);
@@ -552,6 +553,63 @@ describe("booking design and web time", () => {
       const again = await book({ start_time: "09:00", hours: 2 });
       await cancelBooking(tx, again);
       await assert.rejects(cancelBooking(tx, again), /no longer active/);
+    });
+  });
+});
+
+describe("team chat", () => {
+  test("channels, private groups, DMs, mentions, kudos, reactions and unread counts", async () => {
+    const [ama, ben] = await asA(async (tx) =>
+      Promise.all(["Ama Mensah", "Ben Dlamini"].map(async (name) =>
+        (await tx.one<{ id: string }>("insert into users (agency_id, email, name, password_hash, role, title) values ($1,$2,$3,'x','staff','Designer') returning id", [A.agencyId, `${name.split(" ")[0].toLowerCase()}-${run}@test.example`, name]))!.id,
+      )),
+    );
+    const as = <T>(userId: string, name: string, fn: (tx: Tx) => Promise<T>) => withTenant({ agencyId: A.agencyId, userId, actorLabel: name }, fn);
+
+    const { general, secret } = await asA(async (tx) => {
+      await ensureDefaults(tx);
+      const general = (await tx.one<{ id: string }>("select id from chat_channels where name = 'general'"))!.id;
+      assert.equal((await tx.one<{ n: number }>("select count(*)::int as n from chat_members where channel_id = $1 and user_id = any($2)", [general, [ama, ben]]))!.n, 2);
+      const secret = await createChannel(tx, { name: "Pitch Team!", category: "project", private: true, members: [ama] });
+      assert.equal((await tx.one<{ name: string }>("select name from chat_channels where id = $1", [secret]))!.name, "pitch-team");
+      await assert.rejects(createChannel(tx, { name: "pitch team", category: "project", private: false }), /already exists/);
+      return { general, secret };
+    });
+
+    // Ben isn't in the private group: he can't read it or post to it.
+    await as(ben, "Ben Dlamini", (tx) => assert.rejects(messages(tx, secret, ben).then(() => channelFor(tx, secret, ben)), /private/));
+    await as(ben, "Ben Dlamini", (tx) => assert.rejects(sendMessage(tx, secret, "let me in"), /private/));
+
+    await as(ama, "Ama Mensah", async (tx) => {
+      await sendMessage(tx, general, "Morning team! @Ben can you check the **launch** deck?");
+      await assert.rejects(sendMessage(tx, general, "Thanks all", "kudos"), /@mention/);
+      await sendMessage(tx, general, "Huge thanks @Ben Dlamini for the late night 🙌", "kudos");
+    });
+    await as(ben, "Ben Dlamini", async (tx) => {
+      const n = await tx.q<{ kind: string; title: string }>("select kind, title from notifications where user_id = $1 order by created_at", [ben]);
+      assert.deepEqual(n.map((x) => x.kind).sort(), ["chat", "kudos"]);
+      assert.equal(n.find((x) => x.kind === "kudos")!.title, "Ama Mensah gave you kudos 🎉");
+      assert.equal(await unreadTotal(tx, ben), 2);
+      const list = await messages(tx, general, ben);
+      const last = list[list.length - 1];
+      await toggleReaction(tx, last.id, "🎉");
+      await assert.rejects(editMessage(tx, last.id, "changed"), /your own/);
+      await markRead(tx, general, ben, last.seq);
+      assert.equal(await unreadTotal(tx, ben), 0);
+      assert.deepEqual((await messages(tx, general, ben, { afterSeq: last.seq, since: new Date(Date.now() - 60_000).toISOString() })).find((m) => m.id === last.id)?.reactions, [{ emoji: "🎉", count: 1, mine: true, names: ["Ben Dlamini"] }]);
+      await assert.rejects(leaveChannel(tx, general), /stays in #general/);
+      // The same people always land in the same direct conversation.
+      const dm = await openDirect(tx, [ama]);
+      assert.equal(await openDirect(tx, [ama]), dm);
+      await sendMessage(tx, dm, "Coffee?");
+    });
+    await as(ama, "Ama Mensah", async (tx) => {
+      assert.ok(await tx.one("select 1 from notifications where user_id = $1 and title = 'Ben sent you a message'", [ama]));
+      const mine = (await messages(tx, general, ama)).find((m) => m.body.startsWith("Morning"))!;
+      await editMessage(tx, mine.id, "Morning team! @Ben the deck is in Drive");
+      await deleteMessage(tx, mine.id, false);
+      const gone = (await messages(tx, general, ama)).find((m) => m.id === mine.id)!;
+      assert.deepEqual([gone.deleted, gone.body], [true, ""]);
     });
   });
 });
