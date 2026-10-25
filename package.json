@@ -19,7 +19,7 @@
     "db:restore-test": "sh scripts/db-restore-test.sh"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.135.0",
+    "@anthropic-ai/sdk": "^1.1.0",
     "@gsap/react": "^2.1.2",
     "@phosphor-icons/react": "^2.1.10",
     "bcryptjs": "^3.0.3",
