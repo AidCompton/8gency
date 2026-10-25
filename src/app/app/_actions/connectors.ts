@@ -8,6 +8,9 @@ import { deliverOutbox } from "@/lib/connectors/delivery";
 import { folderId } from "@/lib/connectors/files";
 import { provider, type ProviderDef } from "@/lib/connectors/providers";
 import { syncConnection } from "@/lib/connectors/sync";
+import { applyToggl, checkTogglToken, mapTogglProject, matchTogglPerson } from "@/lib/connectors/toggl";
+import { checkTrello, mapTrelloBoard } from "@/lib/connectors/trello";
+import { suggestClient } from "@/lib/domain/imports";
 import { GRAPH } from "@/lib/connectors/versions";
 import { CONNECTORS } from "@/lib/domain/connectors";
 import { can } from "@/lib/permissions";
@@ -52,6 +55,8 @@ async function checkKeys(def: ProviderDef, s: Record<string, string | boolean>):
     if (!r.ok) throw new UserError(`WhatsApp didn't accept those details: ${j.error?.message ?? r.status}`);
     return `${j.verified_name ?? "WhatsApp"} · ${j.display_phone_number ?? ""}`.trim();
   }
+  if (def.key === "toggl") return (await checkTogglToken(String(s.api_token)).catch((e) => { throw new UserError(e.message); })).label;
+  if (def.key === "trello") return await checkTrello(String(s.api_key), String(s.token)).catch((e) => { throw new UserError(e.message); });
   if (def.key === "stripe") {
     const r = await fetch("https://api.stripe.com/v1/account", bearer(s.secret_key));
     const j = await r.json().catch(() => ({}));
@@ -210,5 +215,92 @@ export async function deliverNowAction() {
     if (!can(user, "settings")) throw new UserError("Only owners and operations can send the Outbox.");
     const sent = await deliverOutbox(user.agency_id);
     return withParam("/app/outbox", "ok", sent ? `${sent} sent.` : "Nothing could be sent yet: connect the apps they're waiting for.");
+  });
+}
+
+// ── Pulling work in from Toggl and Trello: the owner confirms what becomes a job ──
+
+async function connOf(tx: Tx, user: User, id: string) {
+  const { conn, def } = await ownConnection(tx, user, id);
+  return { conn, back: backTo(def) };
+}
+
+/** A Toggl project becomes a job awaiting its scope, under an existing client or a new one. */
+export async function mapTogglProjectAction(fd: FormData) {
+  const user = await requireUser();
+  let back = "/app/connectors/toggl";
+  await act(back, () =>
+    tenant(user, async (tx) => {
+      const c = await connOf(tx, user, str(fd, "connection_id"));
+      back = c.back;
+      await mapTogglProject(tx, c.conn, str(fd, "project_id"), { companyId: str(fd, "company_id") || undefined, newClientName: str(fd, "client_name") || undefined });
+      await applyToggl(tx, c.conn);
+      return back;
+    }),
+  "Job created. Its time is on it now.");
+}
+
+/** One click for every project that has a client: match existing clients by name, create the rest. */
+export async function mapAllTogglProjectsAction(fd: FormData) {
+  const user = await requireUser();
+  let back = "/app/connectors/toggl";
+  let made = 0;
+  let skipped = 0;
+  await act(back, async () => {
+    await tenant(user, async (tx) => {
+      const c = await connOf(tx, user, str(fd, "connection_id"));
+      back = c.back;
+      const clients = await tx.q<{ id: string; name: string }>("select id, name from companies where kind = 'client'");
+      const todo = await tx.q<{ external_id: string; payload: { client: string; name: string } }>(
+        `select o.external_id, o.payload from external_objects o where o.connection_id = $1 and o.kind = 'toggl_project' and (o.payload->>'active')::boolean
+            and not exists (select 1 from connection_mappings m where m.connection_id = o.connection_id and m.external_id = o.external_id and m.job_id is not null)`,
+        [c.conn.id],
+      );
+      for (const p of todo) {
+        if (!p.payload.client) {
+          skipped++;
+          continue;
+        }
+        await mapTogglProject(tx, c.conn, p.external_id, { companyId: suggestClient(p.payload.name, clients, p.payload.client) ?? undefined, newClientName: p.payload.client });
+        made++;
+      }
+      await applyToggl(tx, c.conn);
+    });
+    return withParam(back, "ok", `${made} ${made === 1 ? "job" : "jobs"} created from Toggl projects.${skipped ? ` ${skipped} projects have no client in Toggl: map those one by one.` : ""}`);
+  });
+}
+
+export async function matchTogglPersonAction(fd: FormData) {
+  const user = await requireUser();
+  let back = "/app/connectors/toggl";
+  await act(back, () =>
+    tenant(user, async (tx) => {
+      const c = await connOf(tx, user, str(fd, "connection_id"));
+      back = c.back;
+      await matchTogglPerson(tx, c.conn, str(fd, "toggl_user_id"), str(fd, "user_id"));
+      await applyToggl(tx, c.conn);
+      return back;
+    }),
+  "Saved.");
+}
+
+/** A Trello board becomes a job awaiting scope (or maps to a job you already have); its cards are pulled straight away. */
+export async function mapTrelloBoardAction(fd: FormData) {
+  const user = await requireUser();
+  let back = "/app/connectors/trello";
+  const id = str(fd, "connection_id");
+  await act(back, async () => {
+    await tenant(user, async (tx) => {
+      const c = await connOf(tx, user, id);
+      back = c.back;
+      await mapTrelloBoard(tx, c.conn, str(fd, "board_id"), {
+        companyId: str(fd, "company_id") || undefined,
+        newClientName: str(fd, "client_name") || undefined,
+        existingJobId: str(fd, "job_id") || undefined,
+        jobName: str(fd, "job_name") || undefined,
+      });
+    });
+    const r = await syncConnection(user.agency_id, id);
+    return withParam(back, "ok", r.ok ? `Board mapped. ${r.summary}.` : "Board mapped. Its cards arrive at the next sync.");
   });
 }

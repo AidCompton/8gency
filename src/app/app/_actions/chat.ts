@@ -1,6 +1,6 @@
 "use server";
 import { act, bool, str } from "@/lib/actions";
-import { requireUser, tenant } from "@/lib/auth";
+import { assertModule, requireUser, tenant } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import {
   addMembers, createChannel, deleteMessage, editMessage, joinChannel, leaveChannel, openDirect, sendMessage, toggleReaction, updateChannel,
@@ -11,6 +11,7 @@ import { UserError } from "@/lib/services/core";
 async function attempt(fn: (user: Awaited<ReturnType<typeof requireUser>>) => Promise<unknown>): Promise<{ error?: string }> {
   const user = await requireUser();
   try {
+    assertModule(user, "chat");
     await fn(user);
     return {};
   } catch (e) {
@@ -36,6 +37,7 @@ const ids = (fd: FormData, k: string) => fd.getAll(k).map(String).filter(Boolean
 
 export async function createChannelAction(fd: FormData) {
   const user = await requireUser();
+  assertModule(user, "chat");
   await act("/app/chat/new", () =>
     tenant(user, async (tx) => {
       const id = await createChannel(tx, {
@@ -54,17 +56,20 @@ export async function createChannelAction(fd: FormData) {
 
 export async function openDirectAction(fd: FormData) {
   const user = await requireUser();
+  assertModule(user, "chat");
   await act("/app/chat/new", () => tenant(user, async (tx) => `/app/chat/${await openDirect(tx, ids(fd, "people"))}`));
 }
 
 export async function joinChannelAction(fd: FormData) {
   const user = await requireUser();
+  assertModule(user, "chat");
   const id = str(fd, "id");
   await act(`/app/chat/${id}`, () => tenant(user, (tx) => joinChannel(tx, id)), "You're in. Say hi 👋");
 }
 
 export async function leaveChannelAction(fd: FormData) {
   const user = await requireUser();
+  assertModule(user, "chat");
   const id = str(fd, "id");
   await act(`/app/chat/${id}`, async () => {
     await tenant(user, (tx) => leaveChannel(tx, id));
@@ -74,6 +79,7 @@ export async function leaveChannelAction(fd: FormData) {
 
 export async function updateChannelAction(fd: FormData) {
   const user = await requireUser();
+  assertModule(user, "chat");
   const id = str(fd, "id");
   const archive = str(fd, "archive") === "1";
   await act(`/app/chat/${id}`, async () => {
@@ -91,6 +97,7 @@ export async function updateChannelAction(fd: FormData) {
 
 export async function addMembersAction(fd: FormData) {
   const user = await requireUser();
+  assertModule(user, "chat");
   const id = str(fd, "id");
   await act(`/app/chat/${id}`, () => tenant(user, (tx) => addMembers(tx, id, ids(fd, "members"))), "Added.");
 }

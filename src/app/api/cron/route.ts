@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { adminQuery, withTenant } from "@/lib/db";
 import { runConnectors } from "@/lib/connectors/sync";
 import { runAutomations } from "@/lib/services/automations";
+import { sendChatNudges } from "@/lib/services/chatNudges";
 
 /** Scheduler entry point (every few minutes): automations, then connector syncs and Outbox delivery, for every agency. */
 export async function POST(req: Request) {
@@ -10,6 +11,7 @@ export async function POST(req: Request) {
   if (!secret || secret === "change-me" || given.length !== secret.length || !timingSafeEqual(Buffer.from(given), Buffer.from(secret))) {
     return Response.json({ error: "unauthorised" }, { status: 401 });
   }
+  await sendChatNudges().catch((e) => console.error("chat nudges failed", e));
   const agencies = await adminQuery<{ id: string }>("select id from agencies");
   const results: { agency: string; ok: boolean; error?: string }[] = [];
   for (const a of agencies) {

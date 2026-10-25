@@ -8,6 +8,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { addMembersAction, deleteChatAction, editChatAction, joinChannelAction, leaveChannelAction, reactChatAction, sendChatAction, updateChannelAction } from "@/app/app/_actions/chat";
 import { CATEGORIES, CHANNEL_EMOJI, channelTitle, REACTIONS, tokenize, type Person } from "@/lib/domain/chat";
 import type { ChatChannel, ChatMessage } from "@/lib/services/chat";
+import { ChatSidebar } from "./ChatSidebar";
 import { SubmitButton } from "./SubmitButton";
 import { Avatar, buttonClass, cx } from "./ui";
 
@@ -49,70 +50,6 @@ function burst(from: HTMLElement | null) {
     document.body.append(s);
     gsap.to(s, { x: (Math.random() - 0.5) * 260, y: -80 - Math.random() * 140, rotation: (Math.random() - 0.5) * 120, opacity: 0, duration: 1.1 + Math.random() * 0.4, ease: "power2.out", onComplete: () => s.remove() });
   }
-}
-
-function Sidebar({ channels, current, unread, online, me, onNavigate }: { channels: ChatChannel[]; current: string; unread: Record<string, number>; online: Set<string>; me: string; onNavigate: () => void }) {
-  const groups = CATEGORIES.map((c) => ({ ...c, items: channels.filter((x) => x.kind === "channel" && x.category === c.key) })).filter((g) => g.items.length);
-  const dms = channels.filter((c) => c.kind === "dm");
-  const row = (c: ChatChannel, icon: ReactNode, label: string) => {
-    const n = c.id === current ? 0 : (unread[c.id] ?? c.unread);
-    return (
-      <li key={c.id}>
-        <Link
-          href={`/app/chat/${c.id}`}
-          onClick={onNavigate}
-          aria-current={c.id === current ? "page" : undefined}
-          className={cx("flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors pointer-coarse:py-2.5", c.id === current ? "bg-brand/10 font-medium text-brand" : n ? "font-semibold text-ink hover:bg-surface-2" : "text-ink-2 hover:bg-surface-2 hover:text-ink")}
-        >
-          {icon}
-          <span className="min-w-0 flex-1 truncate">{label}</span>
-          {n > 0 && <span className="tnum min-w-5 rounded-full bg-brand px-1.5 text-center text-[11px] font-semibold leading-5 text-brand-ink">{n > 99 ? "99+" : n}<span className="sr-only"> unread</span></span>}
-        </Link>
-      </li>
-    );
-  };
-  return (
-    <nav aria-label="Conversations" className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-3">
-        <span className="flex items-center gap-2 font-semibold"><ChatsCircle aria-hidden size={20} weight="duotone" className="text-brand" /> Chat</span>
-        <span className="flex gap-1">
-          <Link href="/app/chat/browse" title="Browse channels" aria-label="Browse channels" className="grid h-8 w-8 place-items-center rounded-lg text-ink-3 hover:bg-surface-2 hover:text-ink"><Compass aria-hidden size={18} /></Link>
-          <Link href="/app/chat/new" title="New group or message" aria-label="New group or message" className="grid h-8 w-8 place-items-center rounded-lg text-ink-3 hover:bg-surface-2 hover:text-ink"><Plus aria-hidden size={18} /></Link>
-        </span>
-      </div>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-2 py-3">
-        {groups.map((g) => (
-          <section key={g.key}>
-            <h3 className="mb-1 px-2 text-xs font-medium text-ink-3">{g.label}</h3>
-            <ul className="space-y-0.5">
-              {g.items.map((c) => row(c, <span aria-hidden className="w-5 text-center text-[15px]">{c.emoji}</span>, c.name))}
-            </ul>
-          </section>
-        ))}
-        <section>
-          <h3 className="mb-1 flex items-center justify-between px-2 text-xs font-medium text-ink-3">
-            Direct messages
-            <Link href="/app/chat/new#direct" className="rounded text-ink-3 hover:text-brand" aria-label="New direct message"><Plus aria-hidden size={14} /></Link>
-          </h3>
-          <ul className="space-y-0.5">
-            {dms.map((c) => {
-              const first = c.people[0];
-              const live = c.people.some((p) => online.has(p.id) && p.id !== me);
-              return row(
-                c,
-                <span className="relative shrink-0">
-                  <Avatar name={first?.name ?? "?"} size="sm" />
-                  <span aria-hidden className={cx("absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface", live ? "bg-good" : "bg-ink-3/40")} />
-                </span>,
-                channelTitle(c),
-              );
-            })}
-            {!dms.length && <li className="px-2 text-xs text-ink-3">Message anyone on the team from the + above.</li>}
-          </ul>
-        </section>
-      </div>
-    </nav>
-  );
 }
 
 function Message({
@@ -413,15 +350,16 @@ function Settings({ channel, members, people, isManager, me }: { channel: ChatCh
 }
 
 export function ChatApp({
-  me, isManager, channel, channels, people, members, initial, lastRead, hasMore,
+  me, isManager, channel, channels, people, members, initial, lastRead, hasMore, mentions: mentions0,
 }: {
   me: string; isManager: boolean; channel: ChatChannel; channels: ChatChannel[]; people: Member[]; members: Member[];
-  initial: ChatMessage[]; lastRead: number; hasMore: boolean;
+  initial: ChatMessage[]; lastRead: number; hasMore: boolean; mentions: number;
 }) {
   const [list, setList] = useState(initial);
   const [more, setMore] = useState(hasMore);
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [online, setOnline] = useState(new Set(people.filter((p) => p.online).map((p) => p.id)));
+  const [mentions, setMentions] = useState(mentions0);
   const [drawer, setDrawer] = useState(false);
   const [below, setBelow] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
@@ -443,13 +381,14 @@ export function ChatApp({
     const q = new URLSearchParams({ after: String(after.current), read: document.visibilityState === "visible" ? "1" : "0", ...(since.current ? { since: since.current } : {}) });
     const res = await fetch(`/api/chat/${channel.id}?${q}`, { cache: "no-store" }).catch(() => null);
     if (!res?.ok) return;
-    const data: { now: string; messages: ChatMessage[]; unread: Record<string, number>; online: string[] } = await res.json();
+    const data: { now: string; messages: ChatMessage[]; unread: Record<string, number>; mentions: number; online: string[] } = await res.json();
     since.current = data.now;
     after.current = data.messages.reduce((s, m) => Math.max(s, m.seq), after.current);
     const fresh = data.messages.filter((m) => m.user_id !== me && !list.some((x) => x.id === m.id)).length;
     if (!stick.current && fresh) setBelow((n) => n + fresh);
     merge(data.messages);
     setUnread(data.unread);
+    setMentions(data.mentions);
     setOnline(new Set(data.online));
   }, [channel.id, merge, me, list]);
 
@@ -508,7 +447,7 @@ export function ChatApp({
   return (
     <div className="-mx-4 -my-6 flex h-[calc(100dvh-7.5rem)] overflow-hidden border-line bg-surface sm:-mx-6 md:h-[calc(100dvh-4rem)] lg:-mx-8 lg:-my-8">
       <aside className={cx("w-64 shrink-0 border-r border-line bg-surface-2/40 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-72 max-md:bg-surface max-md:shadow-md", drawer ? "" : "max-md:hidden")}>
-        <Sidebar channels={channels} current={channel.id} unread={unread} online={online} me={me} onNavigate={() => setDrawer(false)} />
+        <ChatSidebar channels={channels} current={channel.id} unread={unread} online={online} me={me} mentions={mentions} onNavigate={() => setDrawer(false)} />
       </aside>
       {drawer && <button type="button" aria-label="Close conversations" onClick={() => setDrawer(false)} className="fixed inset-0 z-30 bg-black/40 md:hidden" />}
 

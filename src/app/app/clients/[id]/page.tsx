@@ -2,7 +2,8 @@ import { ArrowSquareOut } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SubmitButton } from "@/components/SubmitButton";
-import { addContactAction, addContractAction, revokeAllHubLinksAction, revokeContactAction, sendHubLinkAction, sendStatusReportAction, toggleOnboardingAction, updateClientAction } from "../../_actions/clients";
+import { openClientChatAction, addContactAction, addContractAction, revokeAllHubLinksAction, revokeContactAction, sendHubLinkAction, sendStatusReportAction, toggleOnboardingAction, updateClientAction } from "../../_actions/clients";
+import { modulesOf } from "@/lib/domain/modules";
 import { Badge, Card, Empty, Field, HealthBadge, LinkButton, Meter, Money, PageHeader, SourceNote, StatusBadge, Table, Tabs, Td, buttonClass, TextLink, StatusIcon } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatDate } from "@/lib/domain/dates";
@@ -50,7 +51,17 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
         back={{ href: "/app/clients", label: "Clients" }}
         title={<span className="flex items-center gap-2">{c.name} <StatusBadge status={c.status} /></span>}
         subtitle={<>{c.code} · {c.payment_terms_days}-day terms{c.po_required ? " · PO required on invoices" : ""} · client since {formatDate(c.created_at.toISOString().slice(0, 10))}</>}
-        actions={can(user, "manageJobs") && <LinkButton href={`/app/jobs/new?company=${id}`} variant="primary">New job</LinkButton>}
+        actions={
+          <>
+            {modulesOf(user.modules).chat && (
+              <form action={openClientChatAction}>
+                <input type="hidden" name="company_id" value={id} />
+                <SubmitButton className={buttonClass("secondary")}>Chat about this client</SubmitButton>
+              </form>
+            )}
+            {can(user, "manageJobs") && <LinkButton href={`/app/jobs/new?company=${id}`} variant="primary">New job</LinkButton>}
+          </>
+        }
       />
       <Tabs base={base} active={tab} tabs={[
         { key: "overview", label: "Overview" },

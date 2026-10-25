@@ -4,8 +4,9 @@ import { BookingForm } from "@/components/BookingForm";
 import { SubmitButton } from "@/components/SubmitButton";
 import { Avatar, Card, Empty, PageHeader, buttonClass, cx } from "@/components/ui";
 import { cancelBookingAction, createBookingAction, declineBookingAction } from "../_actions/bookings";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireUser, tenant, requireModule } from "@/lib/auth";
 import { endTime, TEAMS } from "@/lib/domain/bookings";
+import { modulesOf } from "@/lib/domain/modules";
 import { addDays, formatShort, isWeekday, startOfWeek, todayIn } from "@/lib/domain/dates";
 import { bookableJobs, bookablePeople, bookingsBetween, type BookingRow } from "@/lib/services/bookings";
 
@@ -33,6 +34,7 @@ function BookingLine({ b, children }: { b: BookingRow; children?: React.ReactNod
 export default async function BookingsPage({ searchParams }: { searchParams: Promise<{ week?: string; person?: string; date?: string }> }) {
   const sp = await searchParams;
   const user = await requireUser();
+  requireModule(user, "bookings");
   const today = todayIn(user.timezone);
   // On a weekend, open on the coming week rather than one that's over.
   const week = startOfWeek(ISO.test(sp.week ?? "") ? sp.week! : isWeekday(today) ? today : addDays(today, 2));
@@ -135,7 +137,7 @@ export default async function BookingsPage({ searchParams }: { searchParams: Pro
       </Card>
 
       <Card id="book" title="Book someone" className="mt-4 scroll-mt-24">
-        <BookingForm key={`${prefill.user_id}:${prefill.work_date}`} people={data.people} jobs={data.jobs} booked={booked} today={today} week={week} initial={prefill} action={createBookingAction} />
+        <BookingForm key={`${prefill.user_id}:${prefill.work_date}`} people={data.people} jobs={data.jobs} booked={booked} today={today} week={week} initial={prefill} strict={modulesOf(user.modules).booking_mode === "strict"} action={createBookingAction} />
       </Card>
 
       <div className="mt-4 grid items-start gap-4 lg:grid-cols-2">

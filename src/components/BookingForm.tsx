@@ -23,6 +23,7 @@ export function BookingForm({
   today,
   week,
   initial,
+  strict,
   action,
 }: {
   people: BookablePerson[];
@@ -32,6 +33,8 @@ export function BookingForm({
   today: string;
   week: string;
   initial: { user_id?: string; work_date?: string };
+  /** Strict: the booking must fit the job's hours and a scope item. Loose: just the job and the time. */
+  strict: boolean;
   action: (fd: FormData) => Promise<void>;
 }) {
   const [userId, setUserId] = useState(initial.user_id ?? "");
@@ -50,12 +53,12 @@ export function BookingForm({
 
   const problems = useMemo(
     () =>
-      person && date && job && scope && Number(hours) > 0
-        ? bookingProblems({ date, start, hours: Number(hours) }, { today, dayCapacity: person.day_capacity, sameDay: day, jobHoursLeft: jobLeft ?? null, scopeHoursLeft: scopeLeft ?? null, scopeName: scope.name })
+      person && date && job && (scope || !strict) && Number(hours) > 0
+        ? bookingProblems({ date, start, hours: Number(hours) }, { today, dayCapacity: person.day_capacity, sameDay: day, jobHoursLeft: jobLeft ?? null, scopeHoursLeft: scopeLeft ?? null, scopeName: scope?.name ?? "", strict })
         : [],
-    [person, date, start, hours, job, scope, day, jobLeft, scopeLeft, today],
+    [person, date, start, hours, job, scope, day, jobLeft, scopeLeft, today, strict],
   );
-  const ready = Boolean(person && date && job && scope && Number(hours) > 0);
+  const ready = Boolean(person && date && job && (scope || !strict) && Number(hours) > 0);
   const free = person ? person.day_capacity - day.reduce((s, b) => s + b.hours, 0) : 0;
 
   return (
@@ -93,9 +96,9 @@ export function BookingForm({
             ))}
           </select>
         </Field>
-        <Field label="Scope" className="sm:col-span-2" hint={job && !job.scope.length ? "This job has no agreed scope yet. Lock its scope before booking." : "The part of the agreed scope this work is for."}>
-          <select name="scope_item_id" value={scopeId} onChange={(e) => setScopeId(e.target.value)} required disabled={!job?.scope.length}>
-            <option value="" disabled>{job ? "Choose a scope item…" : "Choose a job first"}</option>
+        <Field label={strict ? "Scope" : "Scope (optional)"} className="sm:col-span-2" hint={job && !job.scope.length ? (strict ? "This job has no agreed scope yet. Add its scope before booking." : "This job has no scope yet. You can still book, but add its scope soon.") : "The part of the agreed scope this work is for."}>
+          <select name="scope_item_id" value={scopeId} onChange={(e) => setScopeId(e.target.value)} required={strict} disabled={!job}>
+            <option value="" disabled={strict}>{job ? (strict ? "Choose a scope item…" : "No specific scope item") : "Choose a job first"}</option>
             {job?.scope.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name} {s.unit === "hours" ? `(${h(Math.max(0, s.quantity - s.logged - s.ahead))} left)` : `(${s.quantity} ${s.quantity === 1 ? "deliverable" : "deliverables"})`}
@@ -128,7 +131,7 @@ export function BookingForm({
           <div>
             <dt className="text-xs text-ink-3">Job time</dt>
             <dd>
-              {!job ? <span className="text-ink-3">Choose a job</span> : jobLeft === null ? <span className="text-warning-ink">No hours budget on this job</span> : (
+              {!job ? <span className="text-ink-3">Choose a job</span> : jobLeft === null ? <span className={strict ? "text-warning-ink" : "text-ink-3"}>No hours budget on this job</span> : (
                 <>
                   <b className="tnum font-medium">{h(jobLeft!)}</b> left of {h(job.budget)}
                   <div className="text-xs text-ink-3">{h(job.logged)} logged · {h(job.ahead)} already booked</div>
@@ -139,7 +142,7 @@ export function BookingForm({
           <div>
             <dt className="text-xs text-ink-3">Scope</dt>
             <dd>
-              {!scope ? <span className="text-ink-3">Choose a scope item</span> : scopeLeft === null ? (
+              {!scope ? <span className="text-ink-3">{strict ? "Choose a scope item" : "None chosen"}</span> : scopeLeft === null ? (
                 <>{scope.name} <span className="text-xs text-ink-3">(deliverable-based)</span></>
               ) : (
                 <>

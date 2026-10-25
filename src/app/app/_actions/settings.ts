@@ -1,6 +1,7 @@
 "use server";
 import { TEAMS } from "@/lib/domain/bookings";
-import { act, num, opt, str } from "@/lib/actions";
+import { MODULES } from "@/lib/domain/modules";
+import { act, bool, num, opt, str } from "@/lib/actions";
 import { requireUser, tenant } from "@/lib/auth";
 import { toCents } from "@/lib/domain/money";
 import { assertCan, can, ROLE_LABELS, type Role } from "@/lib/permissions";
@@ -167,4 +168,21 @@ export async function uploadLogoAction(fd: FormData) {
 export async function removeLogoAction(fd: FormData) {
   const user = await logoUser();
   await act(backTo(fd), () => tenant(user, (tx) => setAgencyLogo(tx, null)), "Logo removed.");
+}
+
+/** Turn parts of 8gency on or off for the whole agency, and choose how strict booking is. */
+export async function updateModulesAction(fd: FormData) {
+  const user = await requireUser();
+  assertCan(user, "settings");
+  await act("/app/settings?tab=modules", () =>
+    tenant(user, async (tx) => {
+      const modules = {
+        ...Object.fromEntries(MODULES.map((m) => [m.key, bool(fd, m.key)])),
+        booking_mode: str(fd, "booking_mode") === "strict" ? "strict" : "loose",
+      };
+      const before = await tx.one<{ modules: unknown }>("select modules from agencies where id = $1", [tx.agencyId]);
+      await tx.q("update agencies set modules = $2 where id = $1", [tx.agencyId, JSON.stringify(modules)]);
+      await tx.audit("settings.modules", "agency", tx.agencyId, before?.modules, modules);
+    }),
+  "Saved.");
 }

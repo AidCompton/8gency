@@ -1,9 +1,9 @@
 import { notFound } from "next/navigation";
 import { ChatApp } from "@/components/ChatApp";
 import { channelTitle } from "@/lib/domain/chat";
-import { getSessionUser, requireUser, tenant } from "@/lib/auth";
+import { getSessionUser, requireUser, tenant, requireModule } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { channelFor, chatPeople, ensureDefaults, markRead, messages, sidebar, touchPresence } from "@/lib/services/chat";
+import { channelFor, chatPeople, ensureDefaults, markRead, messages, sidebar, touchPresence, unreadMentions } from "@/lib/services/chat";
 import { UserError } from "@/lib/services/core";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
@@ -20,6 +20,7 @@ export default async function ChatChannelPage({ params }: { params: Promise<{ id
   const { id } = await params;
   if (!UUID.test(id)) notFound();
   const user = await requireUser();
+  requireModule(user, "chat");
   const data = await tenant(user, async (tx) => {
     await ensureDefaults(tx);
     let channel;
@@ -36,7 +37,7 @@ export default async function ChatChannelPage({ params }: { params: Promise<{ id
     await touchPresence(tx, user.id);
     const people = await chatPeople(tx);
     const memberIds = new Set((await tx.q<{ user_id: string }>("select user_id from chat_members where channel_id = $1", [id])).map((r) => r.user_id));
-    return { channel, list, more: page.length > 60, lastRead: Number(lastRead), channels: await sidebar(tx, user.id), people, members: people.filter((p) => memberIds.has(p.id)) };
+    return { channel, list, more: page.length > 60, lastRead: Number(lastRead), channels: await sidebar(tx, user.id), mentions: await unreadMentions(tx, user.id), people, members: people.filter((p) => memberIds.has(p.id)) };
   });
   if (!data) notFound();
   return (
@@ -52,6 +53,7 @@ export default async function ChatChannelPage({ params }: { params: Promise<{ id
         initial={data.list}
         lastRead={data.lastRead}
         hasMore={data.more}
+        mentions={data.mentions}
       />
     </>
   );

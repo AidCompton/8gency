@@ -1,4 +1,5 @@
 import { getSessionUser, tenant } from "@/lib/auth";
+import { modulesOf } from "@/lib/domain/modules";
 import { channelFor, messages } from "@/lib/services/chat";
 import { UserError } from "@/lib/services/core";
 
@@ -6,6 +7,7 @@ import { UserError } from "@/lib/services/core";
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return Response.json({ error: "signed out" }, { status: 401 });
+  if (!modulesOf(user.modules).chat) return Response.json({ error: "chat is switched off" }, { status: 403 });
   const { id } = await params;
   const before = Number(new URL(req.url).searchParams.get("before")) || 0;
   try {

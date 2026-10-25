@@ -1,6 +1,7 @@
 "use server";
 import { act, bool, num, opt, str } from "@/lib/actions";
-import { requireUser, tenant } from "@/lib/auth";
+import { assertModule, requireUser, tenant } from "@/lib/auth";
+import { ensureClientChannel } from "@/lib/services/chat";
 import { assertCan } from "@/lib/permissions";
 import { addContact, createCompany, revokeContactAccess } from "@/lib/services/agency";
 import { appUrl, ensureHubToken, queueMessage, UserError } from "@/lib/services/core";
@@ -128,4 +129,12 @@ export async function sendStatusReportAction(fd: FormData) {
       await tx.audit("status_report.sent", "company", id, undefined, { to: contacts.length });
     }),
   "Status update sent.");
+}
+
+/** Open (or start) the chat group for a client. */
+export async function openClientChatAction(fd: FormData) {
+  const user = await requireUser();
+  assertModule(user, "chat");
+  const id = str(fd, "company_id");
+  await act(`/app/clients/${id}`, () => tenant(user, async (tx) => `/app/chat/${await ensureClientChannel(tx, id)}`));
 }

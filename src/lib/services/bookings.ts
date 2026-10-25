@@ -1,5 +1,6 @@
 import type { Tx } from "../db";
 import { BOOKABLE_TEAMS, bookingProblems, endTime } from "../domain/bookings";
+import { modulesOf } from "../domain/modules";
 import { formatShort, todayIn } from "../domain/dates";
 import { agencySettings, notify, UserError } from "./core";
 
@@ -42,10 +43,10 @@ export const bookablePeople = (tx: Tx) =>
 
 export function bookingsBetween(tx: Tx, from: string, to: string, filter: { userId?: string; bookedBy?: string } = {}) {
   return tx.q<BookingRow>(
-    `select b.id, b.user_id, u.name as user_name, b.job_id, j.number || ' ' || j.name as job_label, co.name as company_name, s.name as scope_name,
+    `select b.id, b.user_id, u.name as user_name, b.job_id, j.number || ' ' || j.name as job_label, co.name as company_name, coalesce(s.name, '') as scope_name,
             b.work_date::text, to_char(b.start_time, 'HH24:MI') as start_time, b.hours::float, b.title, b.notes, b.booked_by, bb.name as booked_by_name, b.status
        from bookings b join users u on u.id = b.user_id join jobs j on j.id = b.job_id join companies co on co.id = j.company_id
-       join scope_items s on s.id = b.scope_item_id left join users bb on bb.id = b.booked_by
+       left join scope_items s on s.id = b.scope_item_id left join users bb on bb.id = b.booked_by
       where b.status = 'booked' and b.work_date between $1 and $2
         and ($3::uuid is null or b.user_id = $3) and ($4::uuid is null or b.booked_by = $4)
       order by b.work_date, b.start_time`,
@@ -101,8 +102,11 @@ export async function createBooking(
   if (!person) throw new UserError("Choose someone from the design or web team.");
   const [job] = await bookableJobs(tx, input.job_id);
   if (!job) throw new UserError("Choose a live job.");
-  const scope = job.scope.find((s) => s.id === input.scope_item_id);
-  if (!scope) throw new UserError("Choose what in the job's scope this work is for.");
+  const settings = await agencySettings(tx);
+  const strict = modulesOf(settings.modules).booking_mode === "strict";
+  const scope = input.scope_item_id ? job.scope.find((s) => s.id === input.scope_item_id) : undefined;
+  if (input.scope_item_id && !scope) throw new UserError("Choose what in the job's scope this work is for.");
+  if (strict && !scope) throw new UserError("Choose what in the job's scope this work is for.");
   // Lock the person's day so two bookings made at once can't both take the last free hours.
   await tx.q("select id from users where id = $1 for update", [person.id]);
   const sameDay = await tx.q<{ start: string; hours: number; title: string }>(
@@ -111,7 +115,7 @@ export async function createBooking(
   );
   const problems = bookingProblems(
     { date: input.work_date, start: input.start_time, hours: input.hours },
-    { today: todayIn((await agencySettings(tx)).timezone), dayCapacity: person.day_capacity, sameDay, jobHoursLeft: jobHoursLeft(job), scopeHoursLeft: scopeHoursLeft(scope), scopeName: scope.name },
+    { today: todayIn(settings.timezone), dayCapacity: person.day_capacity, sameDay, jobHoursLeft: jobHoursLeft(job), scopeHoursLeft: scope ? scopeHoursLeft(scope) : null, scopeName: scope?.name ?? "", strict },
   );
   if (problems.length) throw new UserError(problems.join(" "));
 
@@ -119,12 +123,12 @@ export async function createBooking(
   const task = await tx.one<{ id: string }>(
     `insert into tasks (agency_id, job_id, title, assignee_id, due_date, estimate_hours, scope_item_id, notes)
      values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
-    [tx.agencyId, job.id, title, person.id, input.work_date, input.hours, scope.id, `Booked by ${tx.actorLabel} for ${formatShort(input.work_date)}, ${range}.${input.notes ? `\n${input.notes}` : ""}`],
+    [tx.agencyId, job.id, title, person.id, input.work_date, input.hours, scope?.id ?? null, `Booked by ${tx.actorLabel} for ${formatShort(input.work_date)}, ${range}.${input.notes ? `\n${input.notes}` : ""}`],
   );
   const b = await tx.one<{ id: string }>(
     `insert into bookings (agency_id, user_id, job_id, scope_item_id, task_id, booked_by, work_date, start_time, hours, title, notes)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
-    [tx.agencyId, person.id, job.id, scope.id, task!.id, tx.userId, input.work_date, input.start_time, input.hours, title, input.notes?.trim() ?? ""],
+    [tx.agencyId, person.id, job.id, scope?.id ?? null, task!.id, tx.userId, input.work_date, input.start_time, input.hours, title, input.notes?.trim() ?? ""],
   );
   if (person.id !== tx.userId) {
     await notify(tx, [person.id], {
@@ -135,7 +139,7 @@ export async function createBooking(
       dedupe: `booking:${b!.id}`,
     });
   }
-  await tx.audit("booking.created", "booking", b!.id, undefined, { person: person.name, job: job.label, scope: scope.name, date: input.work_date, start: input.start_time, hours: input.hours });
+  await tx.audit("booking.created", "booking", b!.id, undefined, { person: person.name, job: job.label, scope: scope?.name ?? null, date: input.work_date, start: input.start_time, hours: input.hours });
   return b!.id;
 }
 

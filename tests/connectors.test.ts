@@ -15,12 +15,15 @@ import { linkProvider } from "../src/lib/connectors/files";
 import { parseWhatsapp, verifyWhatsapp } from "../src/lib/connectors/messaging";
 import { handlePaymentWebhook, payfastSignature } from "../src/lib/connectors/payments";
 import { syncConnection } from "../src/lib/connectors/sync";
+import { applyToggl, mapTogglProject, matchTogglPerson } from "../src/lib/connectors/toggl";
+import { mapTrelloBoard } from "../src/lib/connectors/trello";
 import { addContact, createAgencyWithOwner, createCompany } from "../src/lib/services/agency";
 import { saveAutomation } from "../src/lib/services/automations";
 import { createInvoice, readyToBill, sendInvoice } from "../src/lib/services/billing";
 import { queueMessage } from "../src/lib/services/core";
 import { createJob, lockScope, setJobStatus } from "../src/lib/services/jobs";
 import { timesheetSuggestions } from "../src/lib/services/time";
+import { draftScope, saveScopeDraft } from "../src/lib/services/scopeDraft";
 import { seal, sign, unseal, verify } from "../src/lib/vault";
 
 const run = randomUUID().slice(0, 8);
@@ -351,5 +354,162 @@ describe("crm", () => {
       );
       assert.deepEqual(jobs, [{ name: `Won Co rebrand ${run}`, fee_cents: 45_000_00, company: `Won Co ${run}`, contact: "Sam Lee", role: "approver" }]);
     });
+  });
+});
+
+describe("pulling from Toggl and Trello", () => {
+  const conn = (provider: string) => asA((tx) => tx.one<Parameters<typeof mapTogglProject>[1]>("select * from connections where provider = $1", [provider]));
+
+  test("Toggl: read everything, add time only for mapped projects and matched people, follow edits and deletions", async () => {
+    const mia = await asA(async (tx) => (await tx.one<{ id: string }>("insert into users (agency_id, email, name, password_hash, role, title) values ($1, $2, 'Mia Pulled', 'x', 'staff', 'Designer') returning id", [A.agencyId, `mia-${run}@pull.example`]))!.id);
+    await asA((tx) => saveConnection(tx, { provider: "toggl", userId: null, label: "Toggl", secret: { api_token: "tok-1" } }));
+    let seconds = 5400;
+    let includeSecond = true;
+    const routes: Parameters<typeof stub>[0] = [
+      [/\/api\/v9\/me$/, () => ({ email: "owner@pull.example", fullname: "Owner", default_workspace_id: 77 })],
+      [/workspaces\/77\/clients/, () => [{ id: 1, name: `Pulled Client ${run}` }]],
+      [/workspaces\/77\/projects/, () => [{ id: 10, name: "Brand guidelines", client_id: 1, active: true, billable: true }, { id: 11, name: "Pitch", client_id: null, active: true, billable: false }]],
+      [/workspaces\/77\/workspace_users/, () => [{ uid: 500, name: "Mia Pulled", email: `MIA-${run}@pull.example` }, { uid: 501, name: "Stranger", email: `stranger-${run}@pull.example` }]],
+      [/reports\/api\/v3\/workspace\/77\/search\/time_entries/, () => [
+        { user_id: 500, project_id: 10, billable: true, description: "Typography", time_entries: [{ id: 9001, seconds, start: `${today}T08:00:00+02:00`, stop: `${today}T09:30:00+02:00` }] },
+        ...(includeSecond ? [{ user_id: 501, project_id: 10, billable: true, description: "Colour", time_entries: [{ id: 9002, seconds: 3600, start: `${today}T10:00:00+02:00` }, { id: 9003, seconds: -1700000000, start: `${today}T11:00:00+02:00` }] }] : []),
+      ]],
+    ];
+    const run1 = stub(routes);
+    try {
+      const id = (await conn("toggl"))!.id;
+      const r = await syncConnection(A.agencyId, id);
+      assert.ok(r.ok, r.summary);
+      assert.equal(new Headers(run1.calls[0].init.headers).get("authorization"), `Basic ${Buffer.from("tok-1:api_token").toString("base64")}`);
+    } finally {
+      run1.restore();
+    }
+    await asA(async (tx) => {
+      const n = async (kind: string) => (await tx.one<{ n: number }>("select count(*)::int as n from external_objects where kind = $1", [kind]))!.n;
+      assert.deepEqual([await n("toggl_project"), await n("toggl_entry"), await n("toggl_user")], [2, 2, 2], "projects, two real entries (the running timer is skipped), two people");
+      assert.equal((await tx.one<{ n: number }>("select count(*)::int as n from time_entries where source = 'import' and notes in ('Typography','Colour')"))!.n, 0, "nothing is added until a project is mapped");
+      const matched = await tx.one<{ matched_id: string }>("select matched_id from external_objects where kind = 'toggl_user' and external_id = '500'");
+      assert.equal(matched!.matched_id, mia, "matched by email, ignoring case");
+    });
+
+    // The owner maps the project: a job awaiting scope under a new client, and Mia's time lands on it.
+    const c = (await conn("toggl"))!;
+    const jobId = await asA(async (tx) => {
+      const id = await mapTogglProject(tx, c, "10", {});
+      await applyToggl(tx, c);
+      return id;
+    });
+    await asA(async (tx) => {
+      const job = await tx.one<{ status: string; scope_locked_at: Date | null; name: string; client: string }>("select j.status, j.scope_locked_at, j.name, co.name as client from jobs j join companies co on co.id = j.company_id where j.id = $1", [jobId]);
+      assert.deepEqual([job!.status, job!.scope_locked_at, job!.name, job!.client], ["in_progress", null, "Brand guidelines", `Pulled Client ${run}`]);
+      assert.equal((await tx.one<{ n: number }>("select count(*)::int as n from scope_items where job_id = $1", [jobId]))!.n, 0, "it is waiting for its scope");
+      const te = await tx.q<{ user_id: string; hours: number; source: string; category: string }>("select user_id, hours::float, source, category from time_entries where job_id = $1", [jobId]);
+      assert.deepEqual(te, [{ user_id: mia, hours: 1.5, source: "import", category: "billable" }], "only the matched person; Stranger waits");
+      await matchTogglPerson(tx, c, "501", mia);
+      assert.equal((await applyToggl(tx, c)).created, 1);
+    });
+
+    // Next day: Mia's entry was edited and the other deleted in Toggl.
+    seconds = 7200;
+    includeSecond = false;
+    const run2 = stub(routes);
+    try {
+      assert.ok((await syncConnection(A.agencyId, c.id)).ok);
+      assert.ok((await syncConnection(A.agencyId, c.id)).ok, "a repeat sync changes nothing");
+    } finally {
+      run2.restore();
+    }
+    await asA(async (tx) => {
+      const te = await tx.q<{ hours: number }>("select hours::float from time_entries where job_id = $1 order by hours", [jobId]);
+      assert.deepEqual(te, [{ hours: 2 }], "edited entry updated, deleted entry removed, nothing duplicated");
+    });
+  });
+
+  test("Trello: a board becomes a job awaiting scope and its cards become tasks that follow the lists", async () => {
+    await asA((tx) => saveConnection(tx, { provider: "trello", userId: null, label: "Trello", secret: { api_key: "key-1", token: "tok-2" } }));
+    let list = "Doing";
+    const routes: Parameters<typeof stub>[0] = [
+      [/members\/me\/boards/, () => [{ id: "b1", name: `Karoo Board ${run}`, url: "https://trello.com/b/b1" }]],
+      [/boards\/b1\/lists/, () => [{ id: "l1", name: "Backlog" }, { id: "l2", name: list }]],
+      [/boards\/b1\/cards\/open/, () => [
+        { id: "c1", name: "Homepage design", desc: "Hero and nav", due: `${today}T10:00:00.000Z`, dueComplete: false, idList: "l2", idMembers: ["m1"] },
+        { id: "c2", name: "Sitemap", desc: "", due: null, dueComplete: false, idList: "l1", idMembers: [] },
+      ]],
+      [/boards\/b1\/members/, () => [{ id: "m1", fullName: "Mia Pulled" }]],
+    ];
+    const first = stub(routes);
+    const c = (await conn("trello"))!;
+    try {
+      assert.ok((await syncConnection(A.agencyId, c.id)).ok);
+      assert.match(first.calls[0].init.headers ? JSON.stringify(first.calls[0].init.headers) : "", /oauth_consumer_key=\\"key-1\\"/, "credentials travel in a header, not the address");
+      assert.ok(first.calls.every((x) => !x.url.includes("tok-2")));
+      assert.equal((await asA((tx) => tx.q("select 1 from tasks where title = 'Homepage design'"))).length, 0, "nothing until the board is mapped");
+      const jobId = await asA((tx) => mapTrelloBoard(tx, c, "b1", { newClientName: `Karoo Client ${run}`, jobName: "Karoo website" }));
+      assert.ok((await syncConnection(A.agencyId, c.id)).ok);
+      const tasks = await asA((tx) => tx.q<{ title: string; status: string; due_date: string | null; assignee: string | null }>("select t.title, t.status, t.due_date::text, u.name as assignee from tasks t left join users u on u.id = t.assignee_id where t.job_id = $1 order by t.title", [jobId]));
+      assert.deepEqual(tasks, [
+        { title: "Homepage design", status: "in_progress", due_date: today, assignee: "Mia Pulled" },
+        { title: "Sitemap", status: "todo", due_date: null, assignee: null },
+      ]);
+      list = "Client feedback";
+      assert.ok((await syncConnection(A.agencyId, c.id)).ok);
+      const after = await asA((tx) => tx.q<{ title: string; status: string }>("select title, status from tasks where job_id = $1 order by title", [jobId]));
+      assert.deepEqual(after.map((t) => t.status), ["waiting_client", "todo"]);
+      assert.equal(after.length, 2, "no duplicate tasks on repeat syncs");
+    } finally {
+      first.restore();
+    }
+  });
+});
+
+describe("drafting scope from a quote", () => {
+  test("rules when AI is off, Claude when it's on, never saved without review, never on a locked job", async () => {
+    const { jobId, companyId } = await asA(async (tx) => {
+      const c = await createCompany(tx, { name: `Scope Client ${run}` });
+      return { companyId: c, jobId: await createJob(tx, { company_id: c, name: "Drafted job", template_key: "blank" }) };
+    });
+    const quote = "6 social statics (2 rounds)\n1 campaign video\n40 hours of community management\nVAT 15%";
+
+    // Off by default: rules.
+    await adminQuery("update agencies set ai_enabled = false where id = $1", [A.agencyId]);
+    const rules = await asA((tx) => draftScope(tx, jobId, quote));
+    assert.equal(rules.generatedBy, "rules");
+    assert.match(rules.note ?? "", /Turn on 8gent AI/);
+    assert.deepEqual(rules.items.map((i) => [i.name, i.quantity, i.unit]), [["social statics", 6, "deliverable"], ["campaign video", 1, "deliverable"], ["community management", 40, "hours"]]);
+    assert.equal((await asA((tx) => tx.q("select 1 from scope_items where job_id = $1", [jobId]))).length, 0, "drafting alone saves nothing");
+
+    // On, with a key: the text goes to Claude.
+    await adminQuery("update agencies set ai_enabled = true where id = $1", [A.agencyId]);
+    process.env.ANTHROPIC_API_KEY = "test-key";
+    const reply = '{"items":[{"name":"Social statics","unit":"deliverable","quantity":6,"rounds_allowed":2,"inclusions":"1:1 and 9:16","exclusions":""},{"name":"Community management","unit":"hours","quantity":40,"rounds_allowed":0,"inclusions":"","exclusions":"Paid media"}]}';
+    const ai = stub([[/api\.anthropic\.com\/v1\/messages/, () => ({ id: "msg_1", type: "message", role: "assistant", model: "claude-opus-5-5", content: [{ type: "text", text: reply }], stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 } })]]);
+    let drafted;
+    try {
+      drafted = await asA((tx) => draftScope(tx, jobId, quote));
+    } finally {
+      ai.restore();
+    }
+    assert.equal(drafted.generatedBy, "ai");
+    assert.deepEqual(drafted.items.map((i) => [i.name, i.quantity, i.exclusions]), [["Social statics", 6, ""], ["Community management", 40, "Paid media"]]);
+    assert.match(String(ai.calls[0].init.body), /40 hours of community management/);
+
+    // If the AI is down, the rules reader still gives a draft.
+    const down = stub([[/api\.anthropic\.com/, () => new Response("{}", { status: 500 })]]);
+    try {
+      const fallback = await asA((tx) => draftScope(tx, jobId, quote));
+      assert.equal(fallback.generatedBy, "rules");
+      assert.match(fallback.note ?? "", /couldn't read that/);
+    } finally {
+      down.restore();
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+
+    // Saving the reviewed lines, then locking stops further drafting.
+    await asA((tx) => saveScopeDraft(tx, jobId, drafted.items));
+    assert.equal((await asA((tx) => tx.q("select 1 from scope_items where job_id = $1", [jobId]))).length, 2);
+    await asA((tx) => tx.q("update jobs set scope_locked_at = now() where id = $1", [jobId]));
+    await assert.rejects(asA((tx) => draftScope(tx, jobId, quote)), /locked/);
+    await assert.rejects(asA((tx) => draftScope(tx, jobId, "ab")), /Paste the text/);
+    void companyId;
   });
 });

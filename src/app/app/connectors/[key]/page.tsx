@@ -9,6 +9,9 @@ import {
 } from "../../_actions/connectors";
 import { requireUser, tenant } from "@/lib/auth";
 import type { Tx } from "@/lib/db";
+import { TogglPanel, TrelloPanel } from "./ImportPanel";
+import { togglPanel } from "@/lib/connectors/toggl";
+import { trelloPanel } from "@/lib/connectors/trello";
 import { ga4Properties, googleAdsAccounts, metaAdAccounts } from "@/lib/connectors/ads";
 import { readSecret, type Conn } from "@/lib/connectors/connections";
 import { slackChannels } from "@/lib/connectors/messaging";
@@ -42,6 +45,8 @@ const STORES: Record<ProviderKey, string> = {
   stripe: "The checkout id and amount of each payment.",
   paystack: "The transaction reference and amount of each payment.",
   payfast: "The payment id and amount of each payment.",
+  toggl: "Toggl clients, projects and people, and each time entry's project, person, date, length and description.",
+  trello: "Boards you map, and their cards: name, due date, list, members and whether it is complete.",
 };
 
 type Option = { id: string; label: string };
@@ -108,6 +113,9 @@ export default async function ConnectorPage({ params }: { params: Promise<{ key:
       jobs: await tx.q<{ id: string; label: string }>(
         "select j.id, co.name || ' · ' || j.number || ' ' || j.name as label from jobs j join companies co on co.id = j.company_id where j.status <> 'closed' order by co.name, j.number",
       ),
+      toggl: live.find((x) => x.provider === "toggl") ? await togglPanel(tx, live.find((x) => x.provider === "toggl")!) : null,
+      trello: live.find((x) => x.provider === "trello") ? await trelloPanel(tx, live.find((x) => x.provider === "trello")!) : null,
+      staff: await tx.q<{ id: string; name: string }>("select id, name from users where active order by name"),
       requested: Boolean(await tx.one("select 1 from connector_requests where connector = $1", [key])),
       // Non-secret key fields (merchant ID, sandbox…) to prefill the form; secrets are never sent to the page.
       saved: Object.fromEntries(
@@ -160,6 +168,12 @@ export default async function ConnectorPage({ params }: { params: Promise<{ key:
                 saved={data.saved[def.key] ?? {}}
                 clients={data.clients}
                 jobs={data.jobs}
+                extra={
+                  conn?.status === "active" && (manager || def.personal) ? (
+                    def.key === "toggl" && data.toggl ? <TogglPanel connId={conn.id} data={data.toggl} clients={data.clients} team={data.staff} /> :
+                    def.key === "trello" && data.trello ? <TrelloPanel connId={conn.id} boards={data.trello} clients={data.clients} jobs={data.jobs} /> : null
+                  ) : null
+                }
               />
             );
           })}
@@ -174,7 +188,7 @@ export default async function ConnectorPage({ params }: { params: Promise<{ key:
 }
 
 function ProviderCard({
-  def, conn, manager, agencyId, team, mappings, opts, clients, jobs, saved,
+  def, conn, manager, agencyId, team, mappings, opts, clients, jobs, saved, extra,
 }: {
   def: ProviderDef;
   conn?: Conn & { connected_by_name: string | null };
@@ -186,6 +200,7 @@ function ProviderCard({
   clients: { id: string; name: string }[];
   jobs: { id: string; label: string }[];
   saved: Record<string, unknown>;
+  extra?: ReactNode;
 }) {
   const canManage = def.personal || manager;
   const missing = missingEnv(def);
@@ -358,6 +373,7 @@ function ProviderCard({
             <CheckCircle aria-hidden size={14} /> Also connected: {team.join(", ")}
           </p>
         )}
+        {extra}
         <p className="text-xs text-ink-3">Stores: {STORES[def.key]}</p>
       </div>
     </Card>

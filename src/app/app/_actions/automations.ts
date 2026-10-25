@@ -1,6 +1,6 @@
 "use server";
 import { act, str } from "@/lib/actions";
-import { requireUser, tenant } from "@/lib/auth";
+import { assertModule, requireUser, tenant } from "@/lib/auth";
 import { TEMPLATES, type FlowDef } from "@/lib/domain/automations";
 import { assertCan } from "@/lib/permissions";
 import { deleteAutomation, runAutomations, saveAutomation, setAutomationEnabled } from "@/lib/services/automations";
@@ -9,6 +9,7 @@ import { UserError } from "@/lib/services/core";
 async function admin() {
   const user = await requireUser();
   assertCan(user, "automations");
+  assertModule(user, "automations");
   return user;
 }
 

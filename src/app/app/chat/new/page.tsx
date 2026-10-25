@@ -2,7 +2,7 @@ import { LockSimple, UsersThree } from "@phosphor-icons/react/ssr";
 import { SubmitButton } from "@/components/SubmitButton";
 import { Avatar, Card, Field, PageHeader, buttonClass } from "@/components/ui";
 import { createChannelAction, openDirectAction } from "../../_actions/chat";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireUser, tenant, requireModule } from "@/lib/auth";
 import { CATEGORIES, CHANNEL_EMOJI } from "@/lib/domain/chat";
 
 export const metadata = { title: "New group" };
@@ -25,6 +25,7 @@ function People({ people, name }: { people: { id: string; name: string; title: s
 
 export default async function NewChatPage() {
   const user = await requireUser();
+  requireModule(user, "chat");
   const data = await tenant(user, async (tx) => ({
     people: await tx.q<{ id: string; name: string; title: string }>("select id, name, title from users where active and id <> $1 order by name", [user.id]),
     clients: await tx.q<{ id: string; name: string }>("select id, name from companies where kind = 'client' and status <> 'former' order by name"),

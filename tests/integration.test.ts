@@ -17,6 +17,10 @@ import { createRetainer, reconcilePeriod } from "../src/lib/services/retainers";
 import { clientDecision, createDeliverable, sendToClient, uploadVersion } from "../src/lib/services/review";
 import { decideChangeRequest, submitClientRequest } from "../src/lib/services/scope";
 import { teamTimesheet, teamWorkload } from "../src/lib/services/team";
+import { applyFix, fixList } from "../src/lib/services/fixes";
+import { clearSample, isSampleLoaded, loadSample } from "../src/lib/services/sample";
+import { modulesOf } from "../src/lib/domain/modules";
+import { agencySettings } from "../src/lib/services/core";
 import { cancelBooking, createBooking, declineBooking } from "../src/lib/services/bookings";
 import { channelFor, createChannel, deleteMessage, editMessage, ensureDefaults, leaveChannel, markRead, messages, openDirect, sendMessage, toggleReaction, unreadTotal } from "../src/lib/services/chat";
 import { deleteTimeEntry, logTime, startTimer, stopTimer, timesheetSuggestions } from "../src/lib/services/time";
@@ -511,6 +515,7 @@ describe("team time and workload", () => {
 describe("booking design and web time", () => {
   test("a booking needs free time, job hours and scope; it becomes their task and frees up when declined", async () => {
     await asA(async (tx) => {
+      await tx.q("update agencies set modules = $2 where id = $1", [A.agencyId, JSON.stringify({ booking_mode: "strict" })]);
       const companyId = await createCompany(tx, { name: `Booking Client ${run}` });
       const jobId = await readyJob(tx, companyId, { template: "website" });
       await tx.q("update jobs set budget_hours = 10 where id = $1", [jobId]);
@@ -553,6 +558,25 @@ describe("booking design and web time", () => {
       const again = await book({ start_time: "09:00", hours: 2 });
       await cancelBooking(tx, again);
       await assert.rejects(cancelBooking(tx, again), /no longer active/);
+    });
+  });
+});
+
+describe("booking in loose mode", () => {
+  test("by default a booking needs only a person, a job and a free time; switching a module off hides it", async () => {
+    await asA(async (tx) => {
+      await tx.q("update agencies set modules = '{}' where id = $1", [A.agencyId]);
+      assert.equal(modulesOf((await agencySettings(tx)).modules).booking_mode, "loose");
+      const companyId = await createCompany(tx, { name: `Loose ${run}` });
+      const jobId = await readyJob(tx, companyId);
+      await tx.q("update jobs set budget_hours = 0 where id = $1", [jobId]);
+      const dev = (await tx.one<{ id: string }>("insert into users (agency_id, email, name, password_hash, role, title, team) values ($1,$2,'Loose Dev','x','staff','Developer','web') returning id", [A.agencyId, `loose-${run}@test.example`]))!.id;
+      let day = addDays(todayIn("Africa/Johannesburg"), 1);
+      while (!isWeekday(day)) day = addDays(day, 1);
+      const id = await createBooking(tx, { user_id: dev, job_id: jobId, scope_item_id: "", work_date: day, start_time: "09:00", hours: 4, title: "No budget, no scope" });
+      assert.deepEqual(await tx.one("select scope_item_id, hours::float from bookings where id = $1", [id]), { scope_item_id: null, hours: 4 });
+      await assert.rejects(createBooking(tx, { user_id: dev, job_id: jobId, scope_item_id: "", work_date: day, start_time: "11:00", hours: 2, title: "Clash" }), /Clashes with/);
+      assert.deepEqual(modulesOf({ chat: false, booking_mode: "strict" }), { chat: false, bookings: true, team: true, automations: true, booking_mode: "strict" });
     });
   });
 });
@@ -610,6 +634,113 @@ describe("team chat", () => {
       await deleteMessage(tx, mine.id, false);
       const gone = (await messages(tx, general, ama)).find((m) => m.id === mine.id)!;
       assert.deepEqual([gone.deleted, gone.body], [true, ""]);
+    });
+  });
+});
+
+describe("one-click fixes", () => {
+  test("each leak gets a fix that drafts the work and stops short of reaching the client", async () => {
+    await asA(async (tx) => {
+      const companyId = await createCompany(tx, { name: `Fixes ${run}` });
+      await addContact(tx, { company_id: companyId, name: "Pat Payer", email: `pay-${run}@fixes.example`, role: "billing" });
+      const jobId = await readyJob(tx, companyId, { fee: 30_000_00, template: "campaign" });
+      const mine = (kind: string) => fixList(tx).then((l) => l.filter((f) => f.kind === kind && (f.title.includes(`Fixes ${run}`) || f.detail.includes(`Fixes ${run}`))));
+
+      // 1. The deposit is done and unbilled: one click drafts the invoice (a draft, never sent).
+      const inv = (await mine("invoice"))[0];
+      assert.ok(inv && inv.cents! > 0);
+      const done = await applyFix(tx, "invoice", companyId);
+      assert.match(done.href!, /^\/app\/billing\/invoices\//);
+      assert.equal((await tx.one<{ status: string }>("select status from invoices where company_id = $1", [companyId]))!.status, "draft");
+      assert.equal((await mine("invoice")).length, 0, "the leak is gone once it's drafted");
+      await assert.rejects(applyFix(tx, "invoice", companyId), /Nothing is waiting/);
+
+      // 2. Work outside scope with no change request: one click drafts it and links the task.
+      const taskId = await addTask(tx, { job_id: jobId, title: "Extra landing page", out_of_scope: true, estimate_hours: 6 });
+      const cr = (await fixList(tx)).find((f) => f.kind === "change_request" && f.id === taskId);
+      assert.ok(cr && cr.cents! > 0);
+      const fixed = await applyFix(tx, "change_request", taskId);
+      const crId = fixed.href!.split("/").pop()!;
+      const row = await tx.one<{ title: string; status: string; estimate_hours: number; origin: string }>("select title, status, estimate_hours::float, origin from change_requests where id = $1", [crId]);
+      assert.deepEqual(row, { title: "Extra landing page", status: "draft", estimate_hours: 6, origin: "time" });
+      assert.equal((await tx.one<{ change_request_id: string }>("select change_request_id from tasks where id = $1", [taskId]))!.change_request_id, crId);
+      assert.equal((await fixList(tx)).find((f) => f.kind === "change_request" && f.id === taskId), undefined);
+
+      // 3. An overdue invoice: one click queues a reminder from the agency, and it isn't offered again straight away.
+      await sendInvoice(tx, (await tx.one<{ id: string }>("select id from invoices where company_id = $1", [companyId]))!.id);
+      const sent = (await tx.one<{ id: string }>("select id from invoices where company_id = $1 and status = 'sent'", [companyId]))!;
+      {
+        await tx.q("update invoices set due_date = $2 where id = $1", [sent.id, addDays(todayIn(), -9)]);
+        assert.equal((await mine("reminder")).length, 1);
+        const r = await applyFix(tx, "reminder", sent.id);
+        assert.match(r.message!, /Reminder queued for Pat/);
+        assert.equal((await tx.one<{ n: number }>("select count(*)::int as n from outbox_messages where related_id = $1 and subject like 'Reminder:%'", [sent.id]))!.n, 1);
+        assert.equal((await mine("reminder")).length, 0);
+      }
+
+      // 3b. A retainer month that ended over its hours: one click drafts the change request for the extra.
+      const retainerId = await createRetainer(tx, {
+        company_id: companyId, name: "Fix retainer", fee_cents: 20_000_00, hours_per_period: 20, start_date: addDays(todayIn(), -45), rollover: "none", rollover_cap_hours: 0,
+        billing_timing: "advance", price_increase_pct: 0, job_template_key: "social_month", job_owner_id: null, scope: [],
+      });
+      const period = (await tx.one<{ id: string; starts_on: string }>("select id, starts_on from retainer_periods where retainer_id = $1 order by starts_on limit 1", [retainerId]))!;
+      const rjob = (await tx.one<{ id: string }>("select id from jobs where retainer_id = $1 order by start_date limit 1", [retainerId]))!;
+      await tx.q("update jobs set status = 'in_progress' where id = $1", [rjob.id]);
+      await logTime(tx, A.userId, { job_id: rjob.id, work_date: period.starts_on, hours: 23 });
+      const rec = (await fixList(tx)).find((f) => f.kind === "reconcile" && f.id === period.id);
+      assert.ok(rec && rec.cents! > 0 && /3h over/.test(rec.title), "3 hours over a 20 hour retainer");
+      const settled = await applyFix(tx, "reconcile", period.id);
+      const reconCr = (await tx.one<{ title: string; origin: string; status: string }>("select title, origin, status from change_requests where id = $1", [settled.href!.split("/").pop()]))!;
+      assert.match(reconCr.title, /^Retainer overage .+: 3h$/);
+      assert.deepEqual([reconCr.origin, reconCr.status], ["retainer_overage", "draft"]);
+      assert.equal((await fixList(tx)).find((f) => f.kind === "reconcile" && f.id === period.id), undefined);
+
+      // 4. Over budget: the job owner is told, once a day.
+      await tx.q("update jobs set budget_hours = 5 where id = $1", [jobId]);
+      await tx.q("insert into time_entries (agency_id, user_id, job_id, work_date, hours) values ($1,$2,$3,$4,9)", [A.agencyId, A.userId, jobId, todayIn()]);
+      const budget = (await fixList(tx)).find((f) => f.kind === "budget" && f.id === jobId);
+      assert.ok(budget, "an over-budget job is offered");
+      assert.match((await applyFix(tx, "budget", jobId)).message!, /has been told/);
+      assert.ok(await tx.one("select 1 from notifications where kind = 'budget' and href like $1", [`/app/jobs/${jobId}%`]));
+    });
+  });
+});
+
+describe("the sample agency", () => {
+  test("loads with real leaks to fix, never emails anyone, and clears without touching real data", async () => {
+    await asA(async (tx) => {
+      const real = await createCompany(tx, { name: `Real Client ${run}` });
+      const realJob = await readyJob(tx, real);
+      const before = (await tx.one<{ clients: number; jobs: number; people: number }>("select (select count(*)::int from companies where not is_sample) as clients, (select count(*)::int from jobs j join companies c on c.id = j.company_id where not c.is_sample) as jobs, (select count(*)::int from users where not is_sample) as people"))!;
+
+      assert.equal(await isSampleLoaded(tx), false);
+      await loadSample(tx);
+      assert.equal(await isSampleLoaded(tx), true);
+      await assert.rejects(loadSample(tx), /already loaded/);
+
+      const mine = (await fixList(tx)).filter((f) => f.detail.includes("(sample)") || f.title.includes("(sample)") || /Spring campaign|Website rebuild|Gear/.test(f.title + f.detail) || ["reconcile", "change_request", "invoice", "reminder", "budget"].includes(f.kind));
+      const kinds = new Set((await fixList(tx)).map((f) => f.kind));
+      for (const k of ["invoice", "change_request", "reminder", "reconcile", "budget"]) assert.ok(kinds.has(k as never), `the sample has a "${k}" fix to find`);
+      assert.ok(mine.length >= 5);
+      assert.equal((await tx.one<{ n: number }>("select count(*)::int as n from jobs j join companies c on c.id = j.company_id where c.is_sample and not exists (select 1 from scope_items s where s.job_id = j.id) and j.retainer_id is null"))!.n, 1, "one sample job is waiting for its scope");
+      assert.equal((await tx.one<{ n: number }>("select count(*)::int as n from outbox_messages where to_address like '%.invalid'"))!.n, 0, "nothing is queued for a sample address");
+
+      // The fixes work on sample data, and still send nothing anywhere.
+      const rem = (await fixList(tx)).find((f) => f.kind === "reminder");
+      assert.match((await applyFix(tx, "reminder", rem!.id)).message!, /Reminder queued/);
+      assert.equal((await tx.one<{ n: number }>("select count(*)::int as n from outbox_messages where to_address like '%.invalid'"))!.n, 0);
+
+      await clearSample(tx);
+      assert.equal(await isSampleLoaded(tx), false);
+      const after = (await tx.one<{ clients: number; jobs: number; people: number; sample_users: number; sample_jobs: number; sample_invoices: number }>(
+        `select (select count(*)::int from companies where not is_sample) as clients, (select count(*)::int from jobs j join companies c on c.id = j.company_id where not c.is_sample) as jobs,
+                (select count(*)::int from users where not is_sample) as people, (select count(*)::int from users where is_sample) as sample_users,
+                (select count(*)::int from jobs where company_id not in (select id from companies)) as sample_jobs, (select count(*)::int from invoices where company_id not in (select id from companies)) as sample_invoices`,
+      ))!;
+      assert.deepEqual(after, { ...before, sample_users: 0, sample_jobs: 0, sample_invoices: 0 });
+      assert.ok(await tx.one("select 1 from jobs where id = $1", [realJob]), "the real job is untouched");
+      await loadSample(tx); // and it can be loaded again
+      await clearSample(tx);
     });
   });
 });

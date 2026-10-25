@@ -5,8 +5,10 @@ import { accessToken, markNeedsReauth, ReauthError, type Conn } from "./connecti
 import { deliverOutbox } from "./delivery";
 import { fileFinals } from "./files";
 import { syncHubspot } from "./hubspot";
+import { syncToggl } from "./toggl";
+import { syncTrello } from "./trello";
 import { syncGoogleCalendar, syncOutlookCalendar, syncZoom } from "./meetings";
-import type { ProviderKey } from "./providers";
+import { provider, type ProviderKey } from "./providers";
 
 // The connector worker, run by the scheduler (/api/cron) or "Sync now".
 // Each connection syncs in its own transaction: one app being down never
@@ -24,11 +26,14 @@ const SYNC: Partial<Record<ProviderKey, (tx: Tx, conn: Conn) => Promise<string>>
   hubspot: syncHubspot,
   google_drive: fileFinals,
   dropbox: fileFinals,
+  toggl: syncToggl,
+  trello: syncTrello,
 };
 
 export const hasSync = (p: string) => p in SYNC;
 
-const EVERY_MINUTES = 15;
+/** Most connectors sync every 15 minutes. Toggl and Trello are pulled once a day ("Sync now" does it on demand): they only need to be current for the weekly comparison. */
+const EVERY_MINUTES: Partial<Record<ProviderKey, number>> & { default: number } = { default: 15, toggl: 1440, trello: 1440 };
 
 export async function syncConnection(agencyId: string, connId: string): Promise<{ ok: boolean; summary: string }> {
   const ctx = { agencyId, actorLabel: "connector sync" };
@@ -36,13 +41,13 @@ export async function syncConnection(agencyId: string, connId: string): Promise<
   const run = conn && SYNC[conn.provider];
   if (!conn || !run) return { ok: false, summary: "Nothing to sync." };
   try {
-    // Refresh the token in its own transaction, so a rotated refresh token is never rolled back.
-    await withTenant(ctx, (tx) => accessToken(tx, conn));
+    // Refresh a sign-in token in its own transaction, so a rotated refresh token is never rolled back. API-key connectors have nothing to refresh.
+    if (provider(conn.provider)?.auth.kind === "oauth") await withTenant(ctx, (tx) => accessToken(tx, conn));
     const summary = await withTenant(ctx, async (tx) => {
       const s = await run(tx, conn);
       await tx.q(
         "update connections set last_sync_at = now(), failures = 0, last_error = null, next_sync_at = now() + make_interval(mins => $2), settings = settings || jsonb_build_object('last_summary', $3::text) where id = $1",
-        [connId, EVERY_MINUTES, s],
+        [connId, EVERY_MINUTES[conn.provider] ?? EVERY_MINUTES.default, s],
       );
       return s;
     });

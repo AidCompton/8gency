@@ -11,6 +11,8 @@ import { detectOutOfScope, findVagueScope, nextRoundNeedsChangeRequest, scopeMet
 import { assessWorkload } from "../src/lib/domain/workload";
 import { bookingProblems } from "../src/lib/domain/bookings";
 import { channelName, findMentions, tokenize } from "../src/lib/domain/chat";
+import { cardStatus, entryHours, localDate, suggestClient } from "../src/lib/domain/imports";
+import { itemsFromModelText, parseScopeText, sanitiseItem } from "../src/lib/domain/scopeDraft";
 
 test("brief score rewards complete fields and rejects placeholders", () => {
   const empty = scoreBrief({});
@@ -187,4 +189,47 @@ test("chat: mentions, formatting and channel names", () => {
   ]);
   assert.deepEqual(tokenize("<script>x</script>", people), [{ t: "text", v: "<script>x</script>" }]);
   assert.equal(channelName("  #Vela Launch 2026!! "), "vela-launch-2026");
+});
+
+test("imports: client matching, card status and entry hours", () => {
+  const clients = [{ id: "v", name: "Vela Health (Pty) Ltd" }, { id: "k", name: "Karoo Outdoor Co" }, { id: "b", name: "Blue Crane Brewing" }];
+  assert.equal(suggestClient("Vela Health launch", clients), "v");
+  assert.equal(suggestClient("Website rebuild", clients, "karoo outdoor"), "k");
+  assert.equal(suggestClient("Brand refresh", clients, "Unknown Client"), null);
+  assert.equal(suggestClient("Blue", clients), null, "a partial word is not a client");
+  assert.equal(cardStatus("In Progress", false), "in_progress");
+  assert.equal(cardStatus("Client feedback", false), "waiting_client");
+  assert.equal(cardStatus("Shipped", false), "done");
+  assert.equal(cardStatus("Backlog", true), "done");
+  assert.equal(cardStatus("Ideas", false), "todo");
+  assert.equal(entryHours(5400), 1.5);
+  assert.equal(entryHours(-1700000000), 0, "a running timer isn't time yet");
+  assert.equal(localDate("2026-10-24T22:30:00Z", "Africa/Johannesburg"), "2026-10-25");
+});
+
+test("scope drafting: a quote's lines become scope items, with prices and boilerplate left out", () => {
+  const quote = `Quotation 2026-014 for Vela Health
+- 6 social statics (2 rounds of changes) R 18 000
+- 1x Campaign video, 30 seconds  R 45 000
+  Excludes: talent and music licences
+• 40 hours of community management
+Brand guidelines x 2
+Includes: logo usage, colour, type
+Subtotal R 63 000 excl VAT
+VAT 15%
+Payment terms: 30 days
+Kind regards, Sam`;
+  const items = parseScopeText(quote);
+  assert.deepEqual(items.map((i) => [i.name, i.unit, i.quantity, i.rounds_allowed]), [
+    ["social statics", "deliverable", 6, 2],
+    ["Campaign video, 30 seconds", "deliverable", 1, 2],
+    ["community management", "hours", 40, 0],
+    ["Brand guidelines", "deliverable", 2, 2],
+  ]);
+  assert.equal(items[1].exclusions, "talent and music licences");
+  assert.equal(items[3].inclusions, "logo usage, colour, type");
+  assert.equal(sanitiseItem({ name: " ", unit: "hours" }), null);
+  assert.deepEqual(sanitiseItem({ name: "Posters", unit: "hours", quantity: 5000, rounds_allowed: 99 }), { name: "Posters", unit: "hours", quantity: 1000, rounds_allowed: 0, inclusions: "", exclusions: "" });
+  assert.equal(itemsFromModelText('Here you go:\n```json\n{"items":[{"name":"Website","unit":"deliverable","quantity":1,"rounds_allowed":3,"inclusions":"","exclusions":"Hosting"},{"name":""}]}\n```')?.length, 1);
+  assert.equal(itemsFromModelText("I can't do that."), null);
 });

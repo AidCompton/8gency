@@ -5,12 +5,12 @@
 export type ConnectorIcon =
   | "gmail" | "calendar" | "outlook" | "slack" | "whatsapp" | "teams" | "drive" | "dropbox" | "figma" | "canva"
   | "meta" | "google_ads" | "linkedin" | "analytics" | "tiktok" | "hubspot" | "mailchimp" | "klaviyo"
-  | "xero" | "quickbooks" | "sage" | "payments" | "zoom" | "webhooks" | "zapier";
+  | "xero" | "quickbooks" | "sage" | "payments" | "zoom" | "webhooks" | "zapier" | "toggl" | "trello";
 
 export interface ConnectorDef {
   key: string;
   name: string;
-  category: "Email & calendar" | "Messaging" | "Files & creative" | "Ads & analytics" | "CRM & email marketing" | "Finance" | "Meetings" | "Developers";
+  category: "Time & projects" | "Email & calendar" | "Messaging" | "Files & creative" | "Ads & analytics" | "CRM & email marketing" | "Finance" | "Meetings" | "Developers";
   icon: ConnectorIcon;
   phase: 1 | 2 | 3;
   summary: string;
@@ -18,6 +18,8 @@ export interface ConnectorDef {
 }
 
 export const CONNECTORS: ConnectorDef[] = [
+  { key: "toggl", name: "Toggl Track", category: "Time & projects", icon: "toggl", phase: 1, summary: "Keep tracking in Toggl while 8gency reads it, so nobody types anything twice.", does: ["Clients, projects and everyone's time pulled in daily (read-only)", "Each project becomes a job waiting for its scope", "Switch to 8gency's own timer whenever you're ready"] },
+  { key: "trello", name: "Trello", category: "Time & projects", icon: "trello", phase: 1, summary: "Turn the boards you already use into jobs and tasks.", does: ["Boards become jobs; cards become tasks with due dates and owners", "List names set the status (doing, review, done)", "Read-only: nothing is changed in Trello"] },
   { key: "gmail", name: "Gmail", category: "Email & calendar", icon: "gmail", phase: 1, summary: "Send client emails from your own mailbox.", does: ["Outbox and automation emails send from your Gmail", "“Send from Gmail” step in automations"] },
   { key: "google_calendar", name: "Google Calendar", category: "Email & calendar", icon: "calendar", phase: 1, summary: "Client meetings become time suggestions; automations can book time.", does: ["Client meetings (and Google Meet calls) pre-fill timesheets", "“Add to Google Calendar” step in automations"] },
   { key: "outlook", name: "Microsoft 365 (Outlook)", category: "Email & calendar", icon: "outlook", phase: 1, summary: "The same email and calendar flows for agencies on Microsoft.", does: ["Outlook and Teams meetings pre-fill timesheets", "Send the Outbox from an Outlook mailbox"] },

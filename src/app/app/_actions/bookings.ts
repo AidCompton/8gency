@@ -1,6 +1,6 @@
 "use server";
 import { act, num, str } from "@/lib/actions";
-import { requireUser, tenant } from "@/lib/auth";
+import { assertModule, requireUser, tenant } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { cancelBooking, createBooking, declineBooking } from "@/lib/services/bookings";
 import { UserError } from "@/lib/services/core";
@@ -9,6 +9,7 @@ const BACK = "/app/bookings";
 
 export async function createBookingAction(fd: FormData) {
   const user = await requireUser();
+  assertModule(user, "bookings");
   const back = `${BACK}?week=${encodeURIComponent(str(fd, "week"))}`;
   await act(back, () =>
     tenant(user, async (tx) => {
@@ -29,6 +30,7 @@ export async function createBookingAction(fd: FormData) {
 /** The person booked (or a manager) can say no, with a reason. */
 export async function declineBookingAction(fd: FormData) {
   const user = await requireUser();
+  assertModule(user, "bookings");
   await act(BACK, () =>
     tenant(user, async (tx) => {
       const b = await tx.one<{ user_id: string }>("select user_id from bookings where id = $1", [str(fd, "id")]);
@@ -41,6 +43,7 @@ export async function declineBookingAction(fd: FormData) {
 /** Whoever made the booking (or a manager) can cancel it. */
 export async function cancelBookingAction(fd: FormData) {
   const user = await requireUser();
+  assertModule(user, "bookings");
   await act(BACK, () =>
     tenant(user, async (tx) => {
       const b = await tx.one<{ booked_by: string | null }>("select booked_by from bookings where id = $1", [str(fd, "id")]);

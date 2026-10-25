@@ -5,7 +5,7 @@ import { Stagger } from "@/components/Motion";
 import { SubmitButton } from "@/components/SubmitButton";
 import { Badge, Card, PageHeader, Stat, Table, Tabs, Td, buttonClass, cx } from "@/components/ui";
 import { runAutomationsNowAction, toggleAutomationAction, useTemplateAction } from "../_actions/automations";
-import { requireCap, requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant, requireModule } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { BUILTINS, TEMPLATES, actionDef, triggerDef, type Step } from "@/lib/domain/automations";
 import { enabledBuiltins } from "@/lib/services/automationEngine";
@@ -71,6 +71,7 @@ function AutomationCard({ r }: { r: Row }) {
 export default async function AutomationsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const tab = (await searchParams).tab ?? "mine";
   const user = await requireUser();
+  requireModule(user, "automations");
   requireCap(user, "automations");
   const data = await tenant(user, async (tx) => {
     await enabledBuiltins(tx);

@@ -13,6 +13,8 @@ import {
 } from "../src/lib/services/accountAuth";
 import { addContact, createAgencyWithOwner, createCompany } from "../src/lib/services/agency";
 import { ensureHubToken } from "../src/lib/services/core";
+import { chatHome, createChannel, ensureClientChannel, ensureDefaults, markRead, messages, searchMessages, sendMessage, unreadMentions } from "../src/lib/services/chat";
+import { sendChatNudges } from "../src/lib/services/chatNudges";
 import { resolveHubToken } from "../src/lib/services/hub";
 
 const run = randomUUID().slice(0, 8);
@@ -209,5 +211,103 @@ describe("client hub links", () => {
 
     await adminQuery("update contacts set hub_token = null, hub_token_expires_at = null where id = $1", [contactId]);
     assert.equal(await resolveHubToken(token), null, "a revoked link stops working at once");
+  });
+});
+
+describe("chat nudges, search and client groups", () => {
+  const as = <T>(userId: string, name: string, fn: Parameters<typeof withTenant<T>>[1]) => withTenant({ agencyId: A.agencyId, userId, actorLabel: name }, fn);
+  const mailTo = async (to: string) => (await adminQuery<{ subject: string; body: string }>("select subject, body from system_mail where to_address = $1 order by id", [to]));
+
+  test("an unread mention is emailed once after ten minutes; reading, opting out or switching chat off stops it", async () => {
+    const ana = (await adminQuery<{ id: string }>("insert into users (agency_id, email, name, password_hash, role, title) values ($1,$2,'Ana Sender','x','staff','Designer') returning id", [A.agencyId, `ana-${run}@acc.example`]))[0].id;
+    const bo = (await adminQuery<{ id: string }>("insert into users (agency_id, email, name, password_hash, role, title) values ($1,$2,'Bo Reader','x','staff','Designer') returning id", [A.agencyId, `bo-${run}@acc.example`]))[0].id;
+    const general = await as(ana, "Ana Sender", async (tx) => {
+      await ensureDefaults(tx);
+      return (await tx.one<{ id: string }>("select id from chat_channels where name = 'general'"))!.id;
+    });
+    const backdate = () => adminQuery("update notifications set created_at = now() - interval '11 minutes' where user_id = $1 and emailed_at is null", [bo]);
+    const ping = (text: string) => as(ana, "Ana Sender", (tx) => sendMessage(tx, general, text));
+
+    await ping("@Bo the poster needle-1 is ready");
+    await sendChatNudges();
+    assert.equal((await mailTo(`bo-${run}@acc.example`)).length, 0, "not before ten minutes");
+    await backdate();
+    await sendChatNudges();
+    const mail = await mailTo(`bo-${run}@acc.example`);
+    assert.equal(mail.length, 1);
+    assert.match(mail[0].subject, /Ana mentioned you in #general/);
+    assert.match(mail[0].body, /needle-1/);
+    assert.match(mail[0].body, /turn them off on your account page/);
+    await sendChatNudges();
+    assert.equal((await mailTo(`bo-${run}@acc.example`)).length, 1, "only once");
+
+    // Read it in the app first: no email.
+    await ping("@Bo needle-2 read me quickly");
+    await backdate();
+    await as(bo, "Bo Reader", async (tx) => {
+      const last = (await messages(tx, general, bo)).pop()!;
+      await markRead(tx, general, bo, last.seq);
+    });
+    await sendChatNudges();
+    assert.equal((await mailTo(`bo-${run}@acc.example`)).length, 1, "a message already read in chat isn't emailed");
+
+    // Opted out, or chat switched off for the agency.
+    await ping("@Bo needle-3 opted out");
+    await backdate();
+    await adminQuery("update users set chat_nudges = false where id = $1", [bo]);
+    await sendChatNudges();
+    await adminQuery("update users set chat_nudges = true where id = $1", [bo]);
+    await adminQuery("update agencies set modules = '{\"chat\": false}' where id = $1", [A.agencyId]);
+    await sendChatNudges();
+    await adminQuery("update agencies set modules = '{}' where id = $1", [A.agencyId]);
+    assert.equal((await mailTo(`bo-${run}@acc.example`)).length, 1);
+    await sendChatNudges();
+    assert.equal((await mailTo(`bo-${run}@acc.example`)).length, 2, "and it arrives once they're back on");
+
+    // Search: public messages for everyone, private ones only for members, % is just a character.
+    const secret = await as(ana, "Ana Sender", async (tx) => {
+      const id = await createChannel(tx, { name: `hush-${run}`, category: "project", private: true, members: [] });
+      await sendMessage(tx, id, "private needle-secret and 100% done");
+      return id;
+    });
+    await as(bo, "Bo Reader", async (tx) => {
+      const found = (await searchMessages(tx, bo, "needle-1")).map((r) => r.channel_id);
+      assert.deepEqual(found, [general]);
+      assert.equal((await searchMessages(tx, bo, "needle-secret")).length, 0, "a private group stays private");
+      assert.equal((await searchMessages(tx, bo, "x")).length, 0, "one letter is not a search");
+    });
+    await as(ana, "Ana Sender", async (tx) => {
+      assert.equal((await searchMessages(tx, ana, "needle-secret"))[0].channel_id, secret);
+      assert.equal((await searchMessages(tx, ana, "100%")).length, 1);
+      assert.equal((await searchMessages(tx, ana, "%%")).length, 0, "a wildcard typed into the box is just text: it doesn't match everything");
+    });
+
+    // The Home page: what's unread, who mentioned you, and never a private group you aren't in.
+    await ping("@Bo needle-home are you around?");
+    await as(ana, "Ana Sender", (tx) => sendMessage(tx, secret, "@Bo this one is private"));
+    await as(bo, "Bo Reader", async (tx) => {
+      const home = await chatHome(tx, bo);
+      assert.ok(home.catchUp.some((x) => x.channel.id === general && /needle-home/.test(x.last?.body ?? "")), "unread conversations come with their latest message");
+      const mine = home.mentions.filter((m) => /needle-home|private/.test(m.body));
+      assert.deepEqual(mine.map((m) => m.channel_id), [general], "a mention in a private group Bo isn't in stays hidden");
+      assert.ok(mine[0].unread);
+      assert.equal(home.mentionCount, await unreadMentions(tx, bo));
+      assert.ok(home.mentionCount >= 1);
+      const last = (await messages(tx, general, bo)).pop()!;
+      await markRead(tx, general, bo, last.seq);
+      assert.equal(await unreadMentions(tx, bo), 0, "reading the conversation clears the mention badge");
+      assert.equal((await chatHome(tx, bo)).mentions.find((m) => /needle-home/.test(m.body))?.unread, false);
+    });
+  });
+
+  test("a client's group is made once, linked to the client, with the people who work on it", async () => {
+    await as(A.userId, "Test Owner", async (tx) => {
+      const companyId = await createCompany(tx, { name: `Group Client ${run}` });
+      const first = await ensureClientChannel(tx, companyId);
+      assert.equal(await ensureClientChannel(tx, companyId), first);
+      const c = await tx.one<{ name: string; category: string; company_id: string; private: boolean }>("select name, category, company_id, private from chat_channels where id = $1", [first]);
+      assert.deepEqual(c, { name: `group-client-${run}`.slice(0, 40), category: "client", company_id: companyId, private: false });
+      assert.ok(await tx.one("select 1 from chat_members where channel_id = $1 and user_id = $2", [first, A.userId]));
+    });
   });
 });

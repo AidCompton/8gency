@@ -6,7 +6,7 @@ import { FlowBuilder } from "@/components/FlowBuilder";
 import { SubmitButton } from "@/components/SubmitButton";
 import { Badge, Card, Table, Td, cx } from "@/components/ui";
 import { deleteAutomationAction, saveAutomationAction, toggleAutomationAction } from "../../_actions/automations";
-import { requireCap, requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant, requireModule } from "@/lib/auth";
 import { BUILTINS, type Condition, type Step } from "@/lib/domain/automations";
 
 export const metadata = { title: "Automation" };
@@ -16,6 +16,7 @@ type Row = { id: string; name: string; description: string; enabled: boolean; bu
 export default async function AutomationPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await requireUser();
+  requireModule(user, "automations");
   requireCap(user, "automations");
   const isNew = id === "new";
   if (!isNew && !/^[0-9a-f-]{36}$/i.test(id)) notFound();

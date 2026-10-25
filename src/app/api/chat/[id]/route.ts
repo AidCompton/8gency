@@ -1,5 +1,6 @@
 import { getSessionUser, tenant } from "@/lib/auth";
-import { channelFor, markRead, messages, sidebar, touchPresence } from "@/lib/services/chat";
+import { modulesOf } from "@/lib/domain/modules";
+import { channelFor, markRead, messages, sidebar, touchPresence, unreadMentions } from "@/lib/services/chat";
 import { UserError } from "@/lib/services/core";
 
 /**
@@ -10,6 +11,7 @@ import { UserError } from "@/lib/services/core";
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return Response.json({ error: "signed out" }, { status: 401 });
+  if (!modulesOf(user.modules).chat) return Response.json({ error: "chat is switched off" }, { status: 403 });
   const { id } = await params;
   const q = new URL(req.url).searchParams;
   const after = Number(q.get("after")) || 0;
@@ -25,7 +27,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         await touchPresence(tx, user.id);
         const side = await sidebar(tx, user.id);
         const online = await tx.q<{ id: string }>("select id from users where active and last_seen_at > now() - interval '5 minutes'");
-        return { now, messages: list, unread: Object.fromEntries(side.map((c) => [c.id, c.unread])), online: online.map((o) => o.id) };
+        return { now, messages: list, unread: Object.fromEntries(side.map((c) => [c.id, c.unread])), mentions: await unreadMentions(tx, user.id), online: online.map((o) => o.id) };
       }),
     );
   } catch (e) {

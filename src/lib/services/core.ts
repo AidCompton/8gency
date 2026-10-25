@@ -32,6 +32,7 @@ export async function agencySettings(tx: Tx) {
     time_locked_until: string | null;
     agency_type: string;
     ai_enabled: boolean;
+    modules: unknown;
   }>("select * from agencies where id = $1", [tx.agencyId]))!;
 }
 
@@ -114,7 +115,8 @@ export async function queueMessage(
     payload?: Record<string, unknown>;
   },
 ) {
-  if (!m.to) return;
+  // Sample data uses addresses that can never be real: don't queue mail for them.
+  if (!m.to || m.to.toLowerCase().endsWith(".invalid")) return;
   await tx.q(
     `insert into outbox_messages (agency_id, channel, to_name, to_address, subject, body, related_type, related_id, via, payload)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,

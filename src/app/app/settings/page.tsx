@@ -1,11 +1,13 @@
+import Link from "next/link";
 import { CheckCircle } from "@phosphor-icons/react/ssr";
 import { LogoCard } from "@/components/LogoCard";
 import { SubmitButton } from "@/components/SubmitButton";
-import { addRateAction, addUserAction, deactivateUserAction, revokeInviteAction, importAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
+import { addRateAction, addUserAction, deactivateUserAction, revokeInviteAction, updateModulesAction, importAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
 import { Badge, Card, Field, Money, PageHeader, Table, Tabs, Td, buttonClass } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatDate } from "@/lib/domain/dates";
 import { TEAMS } from "@/lib/domain/bookings";
+import { MODULES, modulesOf } from "@/lib/domain/modules";
 import { can, ROLE_LABELS } from "@/lib/permissions";
 import { pendingInvites } from "@/lib/services/accountAuth";
 
@@ -18,7 +20,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   requireCap(user, "settings");
   const costs = can(user, "seeCostRates");
   const data = await tenant(user, async (tx) => ({
-    agency: (await tx.one<{ name: string; brand_color: string; job_number_format: string; brief_threshold: number; bill_within_days: number; timezone: string; ai_enabled: boolean; agency_type: string }>("select * from agencies where id = $1", [tx.agencyId]))!,
+    agency: (await tx.one<{ name: string; brand_color: string; job_number_format: string; brief_threshold: number; bill_within_days: number; timezone: string; ai_enabled: boolean; agency_type: string; modules: unknown }>("select * from agencies where id = $1", [tx.agencyId]))!,
     entity: (await tx.one<{ id: string; name: string; legal_name: string; currency: string; tax_label: string; tax_rate: number; tax_number: string; registration_number: string; address: string; bank_details: string; invoice_prefix: string; next_invoice_seq: number }>("select * from entities where is_default order by created_at limit 1"))!,
     rates: await tx.q<{ id: string; role_title: string; rate_cents: number; effective_from: string; company: string | null }>("select r.id, r.role_title, r.rate_cents, r.effective_from, c.name as company from rate_cards r left join companies c on c.id = r.company_id order by r.role_title, c.name nulls first, r.effective_from desc"),
     users: await tx.q<{ id: string; name: string; email: string; role: string; title: string; weekly_hours: number; cost_rate_cents: number; target_utilisation: number; active: boolean; team: string | null }>("select id, name, email, role, title, team, weekly_hours, cost_rate_cents, target_utilisation, active from users order by active desc, name"),
@@ -33,14 +35,15 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <Card className="mb-5 border-brand/40 bg-brand/5">
           <h2 className="font-semibold">Welcome to 8gency. Let's get you live today.</h2>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-ink-2">
-            <li>Import clients, then 3–12 months of time from Harvest, Toggl or a spreadsheet (below).</li>
+            <li>Want to look around first? <Link href="/app" className="font-medium text-brand hover:underline">Explore a sample agency</Link> from Home.</li>
+            <li>Connect <Link href="/app/connectors/toggl" className="font-medium text-brand hover:underline">Toggl</Link> and <Link href="/app/connectors/trello" className="font-medium text-brand hover:underline">Trello</Link> to pull your projects and time in, or import clients and time from a spreadsheet (below).</li>
             <li>Add your team and their roles (Team tab) so time maps to the right people and rates.</li>
             <li>Open <b>Home</b> to see your Agency Health Scan.</li>
             <li>Add approvers on each client and send their first hub links.</li>
           </ol>
         </Card>
       )}
-      <Tabs base="/app/settings" active={tab} tabs={[{ key: "agency", label: "Agency" }, { key: "entity", label: "Billing entity & tax" }, { key: "rates", label: "Rate card" }, { key: "team", label: "Team" }, { key: "import", label: "Import" }, { key: "data", label: "Data & security" }]} />
+      <Tabs base="/app/settings" active={tab} tabs={[{ key: "agency", label: "Agency" }, { key: "entity", label: "Billing entity & tax" }, { key: "rates", label: "Rate card" }, { key: "team", label: "Team" }, { key: "modules", label: "Modules" }, { key: "import", label: "Import" }, { key: "data", label: "Data & security" }]} />
 
       {tab === "agency" && (
         <div className="grid max-w-5xl items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -52,7 +55,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <Field label="Job number format" hint="{CLIENT}, {YYYY}, {YY}, {SEQ}"><input name="job_number_format" defaultValue={data.agency.job_number_format} /></Field>
             <Field label="Minimum brief score to start work"><input name="brief_threshold" defaultValue={data.agency.brief_threshold} /></Field>
             <Field label="Invoice within (days)" hint="Ready-to-bill items older than this are flagged."><input name="bill_within_days" defaultValue={data.agency.bill_within_days} /></Field>
-            <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" name="ai_enabled" defaultChecked={data.agency.ai_enabled} /> 8gent AI drafting enabled (client data is never used for training; drafts always need human review)</label>
+            <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" name="ai_enabled" defaultChecked={data.agency.ai_enabled} /> 8gent AI drafting on. Claude (Anthropic) reads text you give it, such as a quote to draft a scope, to write drafts. It's never used for training, and a person always reviews the result.</label>
             <div><SubmitButton className={buttonClass("primary", "sm")}>Save</SubmitButton></div>
           </form>
         </Card>
@@ -173,6 +176,36 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         </div>
       )}
 
+      {tab === "modules" && (
+        <Card title="What your agency uses" className="max-w-3xl">
+          <form action={updateModulesAction} className="space-y-5">
+            <ul className="divide-y divide-line rounded-lg border border-line">
+              {MODULES.map((m) => (
+                <li key={m.key}>
+                  <label className="flex cursor-pointer items-start gap-3 px-4 py-3">
+                    <input type="checkbox" name={m.key} defaultChecked={modulesOf(data.agency.modules)[m.key]} className="mt-1" />
+                    <span><span className="block text-sm font-medium">{m.label}</span><span className="block text-xs text-ink-3">{m.hint}</span></span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <fieldset>
+              <legend className="mb-2 text-[13px] font-medium text-ink-2">How strict is Book time?</legend>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {([["loose", "Loose", "Book someone on a job at a time. Quick, for teams that plan by feel."], ["strict", "Strict", "The booking must also fit the job's hours budget and one of its scope items."]] as const).map(([v, label, hint]) => (
+                  <label key={v} className="cursor-pointer rounded-lg border border-line p-3 text-sm has-[:checked]:border-brand has-[:checked]:bg-brand/5">
+                    <input type="radio" name="booking_mode" value={v} defaultChecked={modulesOf(data.agency.modules).booking_mode === v} className="sr-only" />
+                    <span className="block font-medium">{label}</span><span className="block text-xs text-ink-3">{hint}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <SubmitButton className={buttonClass("primary", "sm")}>Save</SubmitButton>
+            <p className="text-xs text-ink-3">Switching something off hides it from everyone. Nothing is deleted, and you can turn it back on any time.</p>
+          </form>
+        </Card>
+      )}
+
       {tab === "import" && (
         <div className="grid gap-4 lg:grid-cols-2">
           <Card title="Import a CSV">
@@ -196,7 +229,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               <li>Imported time takes the rate card in force on each date.</li>
               <li>Dates as YYYY-MM-DD or DD/MM/YYYY.</li>
             </ul>
-            <p className="mt-3 text-xs text-ink-3">Direct API connectors for Asana, Harvest and Xero are on the roadmap; CSV works with all of them today.</p>
+            <p className="mt-3 text-xs text-ink-3">Toggl and Trello can be connected to pull your work in automatically (Connectors). For anything else, a CSV works today.</p>
           </Card>
         </div>
       )}

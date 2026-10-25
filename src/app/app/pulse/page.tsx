@@ -1,12 +1,15 @@
 import { Info } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Card, HealthBadge, Meter, Money, PageHeader, Pct, SourceNote, Stat, Table, Tabs, Td, cx } from "@/components/ui";
+import { Card, HealthBadge, Meter, Money, PageHeader, Pct, SourceNote, Stat, Table, Tabs, Td, buttonClass, cx } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatShort } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
 import { can } from "@/lib/permissions";
 import { draftWipSummary } from "@/lib/services/eightgent";
+import { fixAction } from "../_actions/fixes";
+import { SubmitButton } from "@/components/SubmitButton";
+import { fixList } from "@/lib/services/fixes";
 import { clientHealthScores, healthScan, lastNDays, profitability, utilisationByPerson } from "@/lib/services/pulse";
 
 export const metadata = { title: "Pulse" };
@@ -46,6 +49,7 @@ export default async function PulsePage({ searchParams }: { searchParams: Promis
     people: view === "people" ? await utilisationByPerson(tx, w) : [],
     health: view === "clients" ? await clientHealthScores(tx, days) : [],
     wip: view === "overview" ? await draftWipSummary(tx) : null,
+    fixes: view === "overview" ? await fixList(tx) : [],
   }));
   const { prof } = data;
   const t = prof.totals;
@@ -89,6 +93,31 @@ export default async function PulsePage({ searchParams }: { searchParams: Promis
           { key: "people", label: "People" },
         ]}
       />
+
+      {view === "overview" && data.fixes.length > 0 && (
+        <Card id="tour-fixes" title="Fix it now" pad={false} className="mb-4" actions={<span className="text-xs text-ink-3">{data.fixes.length} {data.fixes.length === 1 ? "fix" : "fixes"} ready · biggest first</span>}>
+          <ul className="divide-y divide-line">
+            {data.fixes.slice(0, 8).map((f) => (
+              <li key={`${f.kind}:${f.id}`} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{f.title}</div>
+                  <div className="truncate text-xs text-ink-3">{f.detail}</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  {f.cents !== null && <span className="tnum text-sm font-semibold">{compact(f.cents)}</span>}
+                  <form action={fixAction}>
+                    <input type="hidden" name="kind" value={f.kind} />
+                    <input type="hidden" name="id" value={f.id} />
+                    <input type="hidden" name="back" value="/app/pulse" />
+                    <SubmitButton className={cx(buttonClass("secondary", "sm"))}>{f.label}</SubmitButton>
+                  </form>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {data.fixes.length > 8 && <p className="border-t border-line px-4 py-2.5 text-xs text-ink-3">And {data.fixes.length - 8} more. Fix these first and the rest appear.</p>}
+        </Card>
+      )}
 
       {view === "overview" && data.scan && (
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">

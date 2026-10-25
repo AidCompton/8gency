@@ -5,7 +5,7 @@ import { GRAPH } from "./versions";
 
 export type ProviderKey =
   | "gmail" | "google_calendar" | "google_drive" | "ga4" | "google_ads" | "outlook" | "slack" | "whatsapp"
-  | "xero" | "quickbooks" | "meta_ads" | "hubspot" | "dropbox" | "figma" | "zoom" | "stripe" | "paystack" | "payfast";
+  | "xero" | "quickbooks" | "meta_ads" | "hubspot" | "dropbox" | "figma" | "zoom" | "stripe" | "paystack" | "payfast" | "toggl" | "trello";
 
 export interface OAuthDef {
   kind: "oauth";
@@ -188,6 +188,28 @@ export const PROVIDERS: ProviderDef[] = [
     key: "paystack", name: "Paystack", catalog: "payments", personal: false, webhook: true,
     auth: { kind: "apikey", fields: [{ key: "secret_key", label: "Secret key", secret: true, hint: "sk_live_… or sk_test_…" }] },
     note: "Card and instant EFT payments from the client hub.",
+  },
+  {
+    key: "toggl", name: "Toggl Track", catalog: "toggl", personal: false,
+    auth: {
+      kind: "apikey",
+      fields: [
+        { key: "api_token", label: "API token", secret: true, hint: "Toggl Track › Profile settings › API token. Use a workspace admin's token so we can read everyone's time." },
+        { key: "workspace_id", label: "Workspace ID (optional)", hint: "Only if you have more than one workspace. Otherwise we use your default." },
+      ],
+    },
+    note: "Reads your clients, projects and time every day (read-only). Nothing is ever written to Toggl.",
+  },
+  {
+    key: "trello", name: "Trello", catalog: "trello", personal: false,
+    auth: {
+      kind: "apikey",
+      fields: [
+        { key: "api_key", label: "API key", hint: "trello.com/app-key" },
+        { key: "token", label: "Token", secret: true, hint: "On the same page, click “Token”, and allow read access." },
+      ],
+    },
+    note: "Reads your boards and cards every day (read-only). Each board you choose becomes a job and its cards become tasks. Nothing is ever written to Trello.",
   },
   {
     key: "stripe", name: "Stripe", catalog: "payments", personal: false, webhook: true,

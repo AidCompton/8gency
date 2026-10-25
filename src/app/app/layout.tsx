@@ -1,6 +1,9 @@
 import { cookies } from "next/headers";
+import { Tour } from "@/components/Tour";
+import { clearSampleAction } from "./_actions/sample";
+import { modulesOf } from "@/lib/domain/modules";
 import { touchPresence, unreadTotal } from "@/lib/services/chat";
-import { Bell, Plugs, SignOut } from "@phosphor-icons/react/ssr";
+import { Bell, Plugs, SignOut, UserCircle } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import { Suspense } from "react";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -8,19 +11,28 @@ import { logout } from "../auth-actions";
 import { stopTimerAction } from "./_actions/time";
 import { Flash } from "@/components/Flash";
 import { NavLinks, type NavItem } from "@/components/NavLinks";
-import { Avatar } from "@/components/ui";
+import { buttonClass } from "@/components/ui";
 import { TimerClock } from "@/components/Timer";
 import { requireUser, tenant } from "@/lib/auth";
 import { can, ROLE_LABELS } from "@/lib/permissions";
 import { currentTimer } from "@/lib/services/time";
 
+/** The signed-in person's profile icon in the menu: a glyph rather than initials. */
+const ProfileIcon = () => (
+  <span aria-hidden className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand/10 text-brand">
+    <UserCircle size={22} weight="duotone" />
+  </span>
+);
+
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
+  const mods = modulesOf(user.modules);
   const navCollapsed = (await cookies()).get("8g_nav")?.value === "collapsed";
-  const { timer, unread, triage, chatUnread } = await tenant(user, async (tx) => ({
+  const { timer, unread, triage, chatUnread, sampleJob } = await tenant(user, async (tx) => ({
+    sampleJob: await tx.one<{ id: string | null }>("select (select j.id from jobs j join companies c on c.id = j.company_id where c.is_sample order by j.created_at limit 1) as id where exists (select 1 from companies where is_sample)"),
     timer: await currentTimer(tx, user.id),
-    chatUnread: await unreadTotal(tx, user.id),
-    _seen: await touchPresence(tx, user.id),
+    chatUnread: mods.chat ? await unreadTotal(tx, user.id) : 0,
+    _seen: mods.chat ? await touchPresence(tx, user.id) : null,
     unread: (await tx.one<{ n: number }>("select count(*)::int as n from notifications where user_id = $1 and read_at is null", [user.id]))!.n,
     triage: (await tx.one<{ n: number }>("select count(*)::int as n from client_requests where status = 'new'"))!.n,
   }));
@@ -28,14 +40,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     [
       { href: "/app", label: "Home", icon: "home", group: "", show: true },
       { href: "/app/my-day", label: "My Day", icon: "myday", group: "", show: true },
-      { href: "/app/chat", label: "Chat", icon: "chat", group: "", show: true, badge: chatUnread },
+      { href: "/app/chat", label: "Chat", icon: "chat", group: "", show: mods.chat, badge: chatUnread },
       { href: "/app/jobs", label: "Jobs", icon: "jobs", group: "Workspace", show: true },
       { href: "/app/clients", label: "Clients", icon: "clients", group: "Workspace", show: can(user, "seeAllJobs") },
       { href: "/app/scope", label: "Scope Guard", icon: "scope", group: "Workspace", show: can(user, "triage"), badge: triage },
       { href: "/app/time", label: "Time", icon: "time", group: "Workspace", show: true },
-      { href: "/app/bookings", label: "Book time", icon: "bookings", group: "Workspace", show: true },
-      { href: "/app/team", label: "Team", icon: "team", group: "Workspace", show: can(user, "seeTeamTime") },
-      { href: "/app/automations", label: "Automations", icon: "automations", group: "Workspace", show: can(user, "automations") },
+      { href: "/app/bookings", label: "Book time", icon: "bookings", group: "Workspace", show: mods.bookings },
+      { href: "/app/team", label: "Team", icon: "team", group: "Workspace", show: can(user, "seeTeamTime") && mods.team },
+      { href: "/app/automations", label: "Automations", icon: "automations", group: "Workspace", show: can(user, "automations") && mods.automations },
       { href: "/app/retainers", label: "Retainers", icon: "retainers", group: "Money", show: can(user, "seeBudgetBurn") },
       { href: "/app/billing", label: "Billing", icon: "billing", group: "Money", show: can(user, "billing") },
       { href: "/app/pulse", label: "Pulse", icon: "pulse", group: "Money", show: can(user, "seeMargins") },
@@ -65,7 +77,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           accountMark={
             <div className="flex flex-col items-center gap-1.5">
               <Link href="/app/account" title={`${user.name} · ${ROLE_LABELS[user.role]} · your account`}>
-                <Avatar name={user.name} />
+                <ProfileIcon />
               </Link>
               <form action={logout}>
                 <SubmitButton aria-label="Log out" title="Log out" className="grid h-8 w-8 place-items-center rounded-lg text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink">
@@ -92,7 +104,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           account={
             <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1">
               <Link href="/app/account" title="Your account" className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg transition-colors hover:bg-surface-2">
-                <Avatar name={user.name} />
+                <ProfileIcon />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-ink">{user.name}</div>
                   <div className="truncate text-xs text-ink-3">{ROLE_LABELS[user.role]}</div>
@@ -151,8 +163,20 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <Suspense>
             <Flash />
           </Suspense>
+          {sampleJob && (
+            <div className="no-print mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3 text-sm">
+              <span className="text-ink-2"><b className="font-semibold text-ink">You're looking at a sample agency.</b> It's made up, so look around freely. Clear it before you add your own data.</span>
+              <span className="flex gap-2">
+                <Link href="/app?tour=1" className={buttonClass("secondary", "sm")}>Take the tour</Link>
+                {can(user, "settings") && (
+                  <form action={clearSampleAction}><SubmitButton confirm="Clear the sample agency? Your own data isn't touched." className={buttonClass("primary", "sm")}>Clear sample data</SubmitButton></form>
+                )}
+              </span>
+            </div>
+          )}
           {children}
         </main>
+        {sampleJob && <Suspense><Tour jobId={sampleJob.id} /></Suspense>}
       </div>
     </div>
   );

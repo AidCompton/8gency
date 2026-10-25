@@ -2,7 +2,7 @@ import Link from "next/link";
 import { SubmitButton } from "@/components/SubmitButton";
 import { Card, Empty, PageHeader, buttonClass } from "@/components/ui";
 import { joinChannelAction } from "../../_actions/chat";
-import { requireUser, tenant } from "@/lib/auth";
+import { requireUser, tenant, requireModule } from "@/lib/auth";
 import { CATEGORIES } from "@/lib/domain/chat";
 import { browseChannels, ensureDefaults } from "@/lib/services/chat";
 
@@ -10,6 +10,7 @@ export const metadata = { title: "Browse channels" };
 
 export default async function BrowseChannelsPage() {
   const user = await requireUser();
+  requireModule(user, "chat");
   const channels = await tenant(user, async (tx) => {
     await ensureDefaults(tx);
     return browseChannels(tx, user.id);

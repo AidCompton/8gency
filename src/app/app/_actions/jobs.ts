@@ -1,4 +1,6 @@
 "use server";
+import { sanitiseItem, type DraftItem } from "@/lib/domain/scopeDraft";
+import { draftScope, saveScopeDraft, type ScopeDraft } from "@/lib/services/scopeDraft";
 import { act, bool, num, opt, str } from "@/lib/actions";
 import { requireUser, tenant } from "@/lib/auth";
 import { toCents } from "@/lib/domain/money";
@@ -188,4 +190,30 @@ export async function setJobBillTimeAction(fd: FormData) {
     },
     mode === "off" ? "This job's time is no longer billed to the client." : "Billable time on this job now goes onto the client's next invoice automatically.",
   );
+}
+
+// ── Drafting scope from a quote (called from the job's Scope tab) ──
+
+export async function draftScopeAction(jobId: string, text: string): Promise<{ draft?: ScopeDraft; error?: string }> {
+  const user = await requireUser();
+  assertCan(user, "manageJobs");
+  try {
+    return { draft: await tenant(user, (tx) => draftScope(tx, jobId, text)) };
+  } catch (e) {
+    if (e instanceof UserError) return { error: e.message };
+    throw e;
+  }
+}
+
+export async function saveScopeDraftAction(jobId: string, items: DraftItem[]): Promise<{ error?: string }> {
+  const user = await requireUser();
+  assertCan(user, "manageJobs");
+  try {
+    const clean = items.map((i) => sanitiseItem(i)).filter((i): i is DraftItem => Boolean(i));
+    await tenant(user, (tx) => saveScopeDraft(tx, jobId, clean));
+    return {};
+  } catch (e) {
+    if (e instanceof UserError) return { error: e.message };
+    throw e;
+  }
 }

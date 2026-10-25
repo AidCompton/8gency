@@ -1,3 +1,4 @@
+import { ScopeDrafter } from "@/components/ScopeDrafter";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -292,6 +293,7 @@ async function briefTab(tx: Tx, job: Job) {
 
 async function scopeTab(tx: Tx, job: Job, user: SessionUser) {
   const items = await scopeUsage(tx, { jobId: job.id });
+  const aiOn = (await agencySettings(tx)).ai_enabled;
   const crs = await tx.q<{ id: string; title: string; status: string; price_cents: number; estimate_hours: number; created_at: Date }>(
     "select id, title, status, price_cents, estimate_hours, created_at from change_requests where job_id = $1 order by created_at desc",
     [job.id],
@@ -301,7 +303,7 @@ async function scopeTab(tx: Tx, job: Job, user: SessionUser) {
   const vague = items.flatMap((i) => findVagueScope(`${i.name} ${i.inclusions}`).map((v) => ({ item: i.name, ...v })));
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-      <Card title={locked ? `Scope baseline · approved ${formatDate(new Date(job.scope_locked_at!).toISOString().slice(0, 10))}` : "Scope baseline · draft"} actions={!locked && manage && items.length > 0 && (
+      <Card id="tour-scope" title={locked ? `Scope baseline · approved ${formatDate(new Date(job.scope_locked_at!).toISOString().slice(0, 10))}` : "Scope baseline · draft"} actions={!locked && manage && items.length > 0 && (
         <form action={lockScopeAction}><input type="hidden" name="job_id" value={job.id} /><SubmitButton className={buttonClass("primary", "sm")}>Approve and lock baseline</SubmitButton></form>
       )}>
         {items.length ? (
@@ -325,6 +327,9 @@ async function scopeTab(tx: Tx, job: Job, user: SessionUser) {
             ))}
           </ul>
         ) : <Empty>No scope items yet. Add what was sold: each deliverable or hours bank, with rounds, inclusions and exclusions.</Empty>}
+        {!locked && manage && (
+          <div className="mt-6 border-t border-line pt-4"><ScopeDrafter jobId={job.id} aiOn={aiOn} /></div>
+        )}
         {!locked && manage && (
           <form action={addScopeItemAction} className="mt-6 grid gap-3 border-t border-line pt-4 sm:grid-cols-4">
             <input type="hidden" name="job_id" value={job.id} />

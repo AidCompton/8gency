@@ -315,3 +315,115 @@ export async function updateChannel(
   ]);
   if (input.topic !== undefined && input.topic.trim() !== c.topic) await systemMessage(tx, channelId, `${tx.actorLabel} set the topic: ${input.topic.trim() || "(none)"}`);
 }
+
+/** Messages anyone could find: public channels, plus conversations they're in. Plain text match, newest first. */
+export async function searchMessages(tx: Tx, userId: string, query: string) {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  return tx.q<{ id: string; channel_id: string; channel: string; kind: string; emoji: string; user_name: string | null; body: string; created_at: Date }>(
+    `select m.id, m.channel_id, case when c.kind = 'dm' then 'Direct message' else '#' || c.name end as channel, c.kind, c.emoji, u.name as user_name, m.body, m.created_at
+       from chat_messages m join chat_channels c on c.id = m.channel_id and c.archived_at is null left join users u on u.id = m.user_id
+      where m.deleted_at is null and m.kind <> 'system' and m.body ilike $2
+        and ((c.kind = 'channel' and not c.private) or exists (select 1 from chat_members cm where cm.channel_id = c.id and cm.user_id = $1))
+      order by m.created_at desc limit 50`,
+    [userId, like],
+  );
+}
+
+/** The group for a client: made the first time someone opens it, with the people who work on that client's jobs. */
+export async function ensureClientChannel(tx: Tx, companyId: string): Promise<string> {
+  const company = await tx.one<{ name: string; account_manager_id: string | null }>("select name, account_manager_id from companies where id = $1", [companyId]);
+  if (!company) throw new UserError("Client not found.");
+  const existing = await tx.one<{ id: string }>("select id from chat_channels where company_id = $1 and kind = 'channel' and archived_at is null order by created_at limit 1", [companyId]);
+  if (existing) {
+    await join(tx, existing.id, [tx.userId!]);
+    return existing.id;
+  }
+  const people = await tx.q<{ id: string }>(
+    "select distinct u.id from users u where u.active and (u.id = $2 or u.id in (select owner_id from jobs where company_id = $1 and status <> 'closed') or u.id in (select account_manager_id from jobs where company_id = $1 and status <> 'closed'))",
+    [companyId, company.account_manager_id],
+  );
+  const base = channelName(company.name) || "client";
+  let name = base;
+  for (let i = 2; await tx.one("select 1 from chat_channels where kind = 'channel' and archived_at is null and lower(name) = $1", [name]); i++) name = `${base}-${i}`;
+  return createChannel(tx, { name, topic: `Everything for ${company.name}`, emoji: "🤝", category: "client", private: false, company_id: companyId, members: people.map((p) => p.id) });
+}
+
+/** Messages that @mention the person in conversations they're part of, and haven't read yet. */
+export async function unreadMentions(tx: Tx, userId: string) {
+  return (await tx.one<{ n: number }>(
+    `select count(*)::int as n from chat_messages m
+       join chat_members cm on cm.channel_id = m.channel_id and cm.user_id = $1
+       join chat_channels c on c.id = m.channel_id and c.archived_at is null
+      where $1 = any(m.mentions) and m.seq > cm.last_read_seq and m.deleted_at is null and m.user_id is distinct from $1`,
+    [userId],
+  ))!.n;
+}
+
+export interface HomeMessage {
+  id: string;
+  channel_id: string;
+  channel: string;
+  emoji: string;
+  kind: string;
+  author: string | null;
+  body: string;
+  at: string;
+  unread: boolean;
+}
+
+export interface ChatHomeData {
+  channels: ChatChannel[];
+  /** Conversations with something unread, most unread first, each with its latest message. */
+  catchUp: { channel: ChatChannel; last: HomeMessage | null }[];
+  mentions: HomeMessage[];
+  kudos: HomeMessage[];
+  /** The conversations someone was most recently active in, for "jump back in". */
+  recent: { channel: ChatChannel; last: HomeMessage | null }[];
+  suggestions: ChatChannel[];
+  mentionCount: number;
+}
+
+const MSG_SELECT = `m.id, m.channel_id, case when c.kind = 'dm' then 'Direct message' else '#' || c.name end as channel, c.emoji, m.kind, u.name as author, m.body, m.created_at::text as at`;
+
+/** Everything on the chat Home page, in a few queries. */
+export async function chatHome(tx: Tx, userId: string): Promise<ChatHomeData> {
+  const channels = await sidebar(tx, userId);
+  const ids = channels.map((c) => c.id);
+  const lastRows = ids.length
+    ? await tx.q<HomeMessage>(
+        `select distinct on (m.channel_id) ${MSG_SELECT}, false as unread
+           from chat_messages m join chat_channels c on c.id = m.channel_id left join users u on u.id = m.user_id
+          where m.channel_id = any($1) and m.deleted_at is null and m.kind <> 'system' order by m.channel_id, m.seq desc`,
+        [ids],
+      )
+    : [];
+  const last = new Map(lastRows.map((r) => [r.channel_id, r]));
+  const byRecent = [...channels].sort((a, b) => (last.get(b.id)?.at ?? "").localeCompare(last.get(a.id)?.at ?? ""));
+  const readable = `((c.kind = 'channel' and not c.private) or exists (select 1 from chat_members x where x.channel_id = c.id and x.user_id = $1))`;
+  const mentions = await tx.q<HomeMessage>(
+    `select ${MSG_SELECT}, coalesce(cm.last_read_seq < m.seq, false) as unread
+       from chat_messages m join chat_channels c on c.id = m.channel_id and c.archived_at is null left join users u on u.id = m.user_id
+       left join chat_members cm on cm.channel_id = m.channel_id and cm.user_id = $1
+      where $1 = any(m.mentions) and m.deleted_at is null and m.user_id is distinct from $1 and ${readable} and m.created_at > now() - interval '30 days'
+      order by m.created_at desc limit 8`,
+    [userId],
+  );
+  const kudos = await tx.q<HomeMessage>(
+    `select ${MSG_SELECT}, false as unread
+       from chat_messages m join chat_channels c on c.id = m.channel_id and c.archived_at is null left join users u on u.id = m.user_id
+      where m.kind = 'kudos' and m.deleted_at is null and ${readable} and m.created_at > now() - interval '45 days'
+      order by m.created_at desc limit 4`,
+    [userId],
+  );
+  return {
+    channels,
+    catchUp: channels.filter((c) => c.unread > 0).sort((a, b) => b.unread - a.unread).map((channel) => ({ channel, last: last.get(channel.id) ?? null })),
+    mentions,
+    kudos,
+    recent: byRecent.filter((c) => last.has(c.id)).slice(0, 6).map((channel) => ({ channel, last: last.get(channel.id) ?? null })),
+    suggestions: (await browseChannels(tx, userId)).filter((c) => !c.member).slice(0, 5),
+    mentionCount: await unreadMentions(tx, userId),
+  };
+}

@@ -2,7 +2,9 @@ import type { Icon } from "@phosphor-icons/react";
 import { ArrowsLeftRight, Briefcase, Buildings, CaretRight, CheckCircle, Clock, Eye, Gift, Receipt, Repeat, Tray } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Card, LinkButton, Money, PageHeader, Pct, Stat, TONE, TextLink, cx } from "@/components/ui";
+import { SubmitButton } from "@/components/SubmitButton";
+import { loadSampleAction } from "./_actions/sample";
+import { Card, LinkButton, buttonClass, Money, PageHeader, Pct, Stat, TONE, TextLink, cx } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
 import { ageSince } from "@/lib/domain/dates";
 import { formatMoney } from "@/lib/domain/money";
@@ -10,6 +12,7 @@ import { firstName } from "@/lib/domain/text";
 import { can } from "@/lib/permissions";
 import { runAutomations } from "@/lib/services/automations";
 import { wipRisks } from "@/lib/services/eightgent";
+import { fixList } from "@/lib/services/fixes";
 import { clientHealthScores, healthScan, ownerSummary } from "@/lib/services/pulse";
 import { listRetainers } from "@/lib/services/retainers";
 import { reviewsWaiting } from "@/lib/services/review";
@@ -60,6 +63,9 @@ export default async function Home() {
     return {
       summary: await ownerSummary(tx),
       scan: await healthScan(tx),
+      fixes: await fixList(tx),
+      noScope: await tx.q<{ id: string; label: string }>("select j.id, j.number || ' ' || j.name as label from jobs j where j.status in ('briefing','in_progress','waiting_client') and j.billing_model <> 'internal' and j.retainer_id is null and not exists (select 1 from scope_items s where s.job_id = j.id) order by j.created_at"),
+      empty: !(await tx.one("select 1 from companies limit 1")),
       risks: await wipRisks(tx),
       health: await clientHealthScores(tx),
       reviews: await reviewsWaiting(tx),
@@ -82,6 +88,10 @@ export default async function Home() {
 
   // One prioritised list instead of a card per topic: the most urgent things first.
   const items: Item[] = [];
+  const fixValue = data.fixes.reduce((t, f) => t + (f.cents ?? 0), 0);
+  if (data.fixes.length) items.push({ severity: "warning", icon: Receipt, title: `${plural(data.fixes.length, "fix")} ready: ${compact(fixValue)} you can recover`, meta: "Invoices to draft, change requests to send, reminders to go out", href: "/app/pulse", action: "Fix now" });
+  if (data.noScope.length)
+    items.push({ severity: "warning", icon: Briefcase, title: `${plural(data.noScope.length, "live job")} ${data.noScope.length === 1 ? "has" : "have"} no scope yet`, meta: data.noScope.length === 1 ? data.noScope[0].label : `${data.noScope[0].label} and ${data.noScope.length - 1} more: without a scope, extra work goes unnoticed`, href: `/app/jobs/${data.noScope[0].id}?tab=scope`, action: "Add scope" });
   if (s.overdueDebtors > 0) items.push({ severity: "critical", icon: Receipt, title: `${compact(s.overdueDebtors)} overdue from clients`, meta: `${compact(s.debtors)} owed in total`, href: "/app/billing?tab=debtors", action: "Chase" });
   for (const r of data.retainers.filter((r) => r.burn?.alert))
     items.push({ severity: "critical", icon: Repeat, title: `${r.retainer.company_name} retainer is ahead of the month`, meta: `${r.usedHours}h of ${r.allocated}h used so far`, href: `/app/retainers/${r.retainer.id}`, action: "Review" });
@@ -115,6 +125,17 @@ export default async function Home() {
         actions={<LinkButton href="/app/pulse">Open Pulse</LinkButton>}
       />
 
+      {data.empty && (
+        <div className="mb-6 rounded-xl border border-brand/30 bg-brand/5 p-5">
+          <h2 className="text-base font-semibold">Nothing here yet. Want to see it working first?</h2>
+          <p className="mt-1 max-w-2xl text-sm text-ink-2">Explore a made-up agency with real-looking problems to find and fix, with a short guided tour. You can clear it in one click, and it never touches your own data. Or bring in your own now.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <form action={loadSampleAction}><SubmitButton className={buttonClass("primary")}>Explore a sample agency</SubmitButton></form>
+            <LinkButton href="/app/settings?tab=import">Import my own data</LinkButton>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Profit this month" value={<Money cents={s.profit} compact />} hint={`On track for ${compact(s.forecastProfit)}`} tone={s.margin !== null && s.margin < 0.15 ? "warning" : undefined} href="/app/pulse" />
         <Stat label="Owed to you" value={<Money cents={s.debtors} compact />} hint={s.overdueDebtors ? `${compact(s.overdueDebtors)} overdue` : "Nothing overdue"} tone={s.overdueDebtors ? "critical" : "good"} href="/app/billing?tab=debtors" />
@@ -123,7 +144,7 @@ export default async function Home() {
       </div>
 
       <div className="mt-6 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Card title="Needs your attention" pad={false} actions={items.length ? <span className="text-xs text-ink-3">Most urgent first</span> : null}>
+        <Card id="tour-attention" title="Needs your attention" pad={false} actions={items.length ? <span className="text-xs text-ink-3">Most urgent first</span> : null}>
           {items.length ? (
             <>
               <ul className="divide-y divide-line">{shown.map((i, n) => <AttentionRow key={n} i={i} />)}</ul>

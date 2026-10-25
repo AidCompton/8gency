@@ -44,6 +44,8 @@ export interface BookingLimits {
   /** For hour-based scope items: hours left in scope; null for deliverable-based items. */
   scopeHoursLeft: number | null;
   scopeName: string;
+  /** Strict (the default): the booking must fit the job's hours budget and a scope item. Loose: only time, job and the person's day. */
+  strict?: boolean;
 }
 
 /** Every reason the booking can't go ahead, in plain words. Empty means it can. */
@@ -63,6 +65,7 @@ export function bookingProblems(r: BookingRequest, l: BookingLimits): string[] {
   if (clash) p.push(`Clashes with “${clash.title}” (${clash.start}–${endTime(clash.start, clash.hours)}).`);
   const free = l.dayCapacity - l.sameDay.reduce((s, b) => s + b.hours, 0);
   if (r.hours > free + 1e-9) p.push(free > 0 ? `Only ${h(free)} free that day.` : "Fully booked that day.");
+  if (l.strict === false) return p;
   if (l.jobHoursLeft === null) p.push("This job has no hours budget. Set one on the job before booking time against it.");
   else if (r.hours > l.jobHoursLeft + 1e-9) p.push(l.jobHoursLeft > 0 ? `Only ${h(l.jobHoursLeft)} of the job's budget is left.` : "The job's hours budget is used up. Raise a change request in Scope Guard for more time.");
   if (l.scopeHoursLeft !== null && r.hours > l.scopeHoursLeft + 1e-9)

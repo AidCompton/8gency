@@ -1,7 +1,7 @@
 import { Info } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import { Avatar, Badge, Card, Empty, PageHeader, Tabs, TextLink, buttonClass, cx, type Tone } from "@/components/ui";
-import { requireCap, requireUser, tenant } from "@/lib/auth";
+import { requireCap, requireUser, tenant, requireModule } from "@/lib/auth";
 import { addDays, addMonths, endOfMonth, formatShort, startOfMonth, startOfWeek, todayIn } from "@/lib/domain/dates";
 import type { WorkloadStatus } from "@/lib/domain/workload";
 import { teamTimesheet, teamWorkload, type PersonWorkload, type TimesheetRow } from "@/lib/services/team";
@@ -71,6 +71,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   const user = await requireUser();
   requireCap(user, "seeTeamTime");
+  requireModule(user, "team");
   const tab = sp.tab === "timesheets" ? "timesheets" : "workload";
   const today = todayIn(user.timezone);
   const period = PERIODS.some((p) => p.key === sp.period) ? sp.period! : "this_week";

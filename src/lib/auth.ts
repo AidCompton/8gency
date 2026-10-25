@@ -4,7 +4,9 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { adminQuery, withTenant, type Tx } from "./db";
+import { modulesOf, type ModuleKey } from "./domain/modules";
 import { hashToken } from "./passwords";
+import { UserError } from "./services/core";
 import { can, type Capability, type Role } from "./permissions";
 
 const COOKIE = "8g_session";
@@ -23,6 +25,8 @@ export interface SessionUser {
   agency_logo_v: string | null;
   timezone: string;
   base_currency: string;
+  /** Raw per-agency module switches; read with modulesOf(). */
+  modules: unknown;
 }
 
 export { hashPassword, hashToken, verifyPassword } from "./passwords";
@@ -63,7 +67,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   if (!token) return null;
   const rows = await adminQuery<SessionUser>(
     `select u.id, u.agency_id, u.email, u.name, u.role, u.title,
-            a.name as agency_name, a.brand_color as agency_color, case when a.logo is not null then floor(extract(epoch from a.logo_updated_at))::bigint::text end as agency_logo_v, a.timezone, a.base_currency
+            a.name as agency_name, a.brand_color as agency_color, case when a.logo is not null then floor(extract(epoch from a.logo_updated_at))::bigint::text end as agency_logo_v, a.timezone, a.base_currency, a.modules
        from sessions s
        join users u on u.id = s.user_id and u.active
        join agencies a on a.id = s.agency_id
@@ -87,4 +91,14 @@ export async function tenant<T>(user: SessionUser, fn: (tx: Tx) => Promise<T>): 
 /** For pages: send users without a capability back to My Day with a message, rather than an error page. */
 export function requireCap(user: SessionUser, cap: Capability) {
   if (!can(user, cap)) redirect(`/app/my-day?error=${encodeURIComponent("You don't have access to that page. Ask an owner or operations lead if you need it.")}`);
+}
+
+/** For pages: send people away (to My Day, with a message) when the agency has switched a module off. */
+export function requireModule(user: SessionUser, key: ModuleKey) {
+  if (!modulesOf(user.modules)[key]) redirect(`/app/my-day?error=${encodeURIComponent("That part of 8gency is switched off for your agency. An owner can turn it on in Settings.")}`);
+}
+
+/** For actions and API routes: the same check, as an error the caller can show. */
+export function assertModule(user: SessionUser, key: ModuleKey) {
+  if (!modulesOf(user.modules)[key]) throw new UserError("That part of 8gency is switched off for your agency.");
 }
