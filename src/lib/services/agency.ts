@@ -126,12 +126,12 @@ export async function onboardingProgress(tx: Tx, companyId: string) {
 
 export async function addTeamMember(
   tx: Tx,
-  input: { name: string; email: string; passwordHash: string; role: Role; title: string; weekly_hours: number; cost_rate_cents: number; target_utilisation: number },
+  input: { name: string; email: string; passwordHash: string; role: Role; title: string; weekly_hours: number; cost_rate_cents: number; target_utilisation: number; team?: string | null },
 ) {
   const row = await tx.one<{ id: string }>(
-    `insert into users (agency_id, email, name, password_hash, role, title, weekly_hours, cost_rate_cents, target_utilisation)
-     values ($1,lower($2),$3,$4,$5,$6,$7,$8,$9) returning id`,
-    [tx.agencyId, input.email, input.name, input.passwordHash, input.role, input.title, input.weekly_hours, input.cost_rate_cents, input.target_utilisation],
+    `insert into users (agency_id, email, name, password_hash, role, title, weekly_hours, cost_rate_cents, target_utilisation, team)
+     values ($1,lower($2),$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
+    [tx.agencyId, input.email, input.name, input.passwordHash, input.role, input.title, input.weekly_hours, input.cost_rate_cents, input.target_utilisation, input.team ?? null],
   );
   await tx.audit("user.created", "user", row!.id, undefined, { name: input.name, email: input.email, role: input.role });
   return row!.id;

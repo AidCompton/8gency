@@ -9,6 +9,7 @@ import { formatMoney, invoiceTotals, toCents } from "../src/lib/domain/money";
 import { reconcileRetainer, retainerBurn } from "../src/lib/domain/retainer";
 import { detectOutOfScope, findVagueScope, nextRoundNeedsChangeRequest, scopeMeter } from "../src/lib/domain/scope";
 import { assessWorkload } from "../src/lib/domain/workload";
+import { bookingProblems } from "../src/lib/domain/bookings";
 
 test("brief score rewards complete fields and rejects placeholders", () => {
   const empty = scoreBrief({});
@@ -158,4 +159,18 @@ test("workload: who is taking on too much", () => {
 
   // No contracted hours: nothing to judge against.
   assert.equal(assessWorkload({ ...base, weeklyHours: 0 }).status, "balanced");
+});
+
+test("bookings: time, capacity, job budget and scope", () => {
+  const limits = { today: "2026-10-26", dayCapacity: 8, sameDay: [{ start: "09:00", hours: 3, title: "Homepage" }], jobHoursLeft: 10, scopeHoursLeft: null, scopeName: "Website" };
+  assert.deepEqual(bookingProblems({ date: "2026-10-27", start: "13:00", hours: 4 }, limits), []);
+  assert.match(bookingProblems({ date: "2026-10-27", start: "11:00", hours: 2 }, limits).join(), /Clashes with “Homepage” \(09:00–12:00\)/);
+  assert.match(bookingProblems({ date: "2026-10-27", start: "12:00", hours: 6 }, limits).join(), /Only 5h free that day/);
+  assert.match(bookingProblems({ date: "2026-10-27", start: "12:00", hours: 5 }, { ...limits, jobHoursLeft: 2 }).join(), /Only 2h of the job's budget is left/);
+  assert.match(bookingProblems({ date: "2026-10-27", start: "12:00", hours: 2 }, { ...limits, jobHoursLeft: null }).join(), /no hours budget/);
+  assert.match(bookingProblems({ date: "2026-10-27", start: "12:00", hours: 2 }, { ...limits, scopeHoursLeft: 0 }).join(), /“Website” is used up/);
+  assert.match(bookingProblems({ date: "2026-10-31", start: "12:00", hours: 2 }, limits).join(), /weekend/);
+  assert.match(bookingProblems({ date: "2026-10-23", start: "12:00", hours: 2 }, limits).join(), /passed/);
+  assert.match(bookingProblems({ date: "2026-10-27", start: "18:00", hours: 2 }, limits).join(), /between 07:00 and 19:00/);
+  assert.match(bookingProblems({ date: "2026-10-27", start: "13:00", hours: 1.1 }, limits).join(), /quarter hours/);
 });

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, describe, test } from "node:test";
 import { adminQuery, closePools, withAdminTx, withTenant, type Tx } from "../src/lib/db";
-import { addDays, todayIn } from "../src/lib/domain/dates";
+import { addDays, isWeekday, todayIn } from "../src/lib/domain/dates";
 import { addContact, createAgencyWithOwner, createCompany, setAgencyLogo } from "../src/lib/services/agency";
 import { createInvoice, readyToBill, recordPayment, saveDraftInvoice, sendInvoice, syncUnbilledTime, type DraftInvoiceEdit } from "../src/lib/services/billing";
 import { TEMPLATES } from "../src/lib/domain/automations";
@@ -17,6 +17,7 @@ import { createRetainer, reconcilePeriod } from "../src/lib/services/retainers";
 import { clientDecision, createDeliverable, sendToClient, uploadVersion } from "../src/lib/services/review";
 import { decideChangeRequest, submitClientRequest } from "../src/lib/services/scope";
 import { teamTimesheet, teamWorkload } from "../src/lib/services/team";
+import { cancelBooking, createBooking, declineBooking } from "../src/lib/services/bookings";
 import { deleteTimeEntry, logTime, startTimer, stopTimer, timesheetSuggestions } from "../src/lib/services/time";
 
 const run = randomUUID().slice(0, 8);
@@ -502,6 +503,55 @@ describe("team time and workload", () => {
       const alerts = await tx.q<{ user_id: string; href: string }>("select user_id, href from notifications where kind = 'workload' and title like '%Busy Dev%'");
       assert.deepEqual(alerts.map((a) => a.user_id), [A.userId]);
       assert.match(alerts[0].href, new RegExp(dev));
+    });
+  });
+});
+
+describe("booking design and web time", () => {
+  test("a booking needs free time, job hours and scope; it becomes their task and frees up when declined", async () => {
+    await asA(async (tx) => {
+      const companyId = await createCompany(tx, { name: `Booking Client ${run}` });
+      const jobId = await readyJob(tx, companyId, { template: "website" });
+      await tx.q("update jobs set budget_hours = 10 where id = $1", [jobId]);
+      const scope = (await tx.one<{ id: string }>("select id from scope_items where job_id = $1 order by created_at limit 1", [jobId]))!.id;
+      const dev = (await tx.one<{ id: string }>(
+        "insert into users (agency_id, email, name, password_hash, role, title, team, weekly_hours) values ($1, $2, 'Web Dev', 'x', 'staff', 'Developer', 'web', 40) returning id",
+        [A.agencyId, `web-${run}@test.example`],
+      ))!.id;
+      const writer = (await tx.one<{ id: string }>(
+        "insert into users (agency_id, email, name, password_hash, role, title, team) values ($1, $2, 'Copy Writer', 'x', 'staff', 'Copywriter', 'content') returning id",
+        [A.agencyId, `copy-${run}@test.example`],
+      ))!.id;
+      let day = addDays(todayIn("Africa/Johannesburg"), 1);
+      while (!isWeekday(day)) day = addDays(day, 1);
+      const book = (o: Partial<Parameters<typeof createBooking>[1]>) =>
+        createBooking(tx, { user_id: dev, job_id: jobId, scope_item_id: scope, work_date: day, start_time: "09:00", hours: 4, title: "Homepage build", ...o });
+
+      const first = await book({});
+      const task = await tx.one<{ assignee_id: string; estimate_hours: number; due_date: string; scope_item_id: string }>(
+        "select t.assignee_id, t.estimate_hours::float, t.due_date::text, t.scope_item_id from bookings b join tasks t on t.id = b.task_id where b.id = $1",
+        [first],
+      );
+      assert.deepEqual(task, { assignee_id: dev, estimate_hours: 4, due_date: day, scope_item_id: scope });
+      assert.ok(await tx.one("select 1 from notifications where user_id = $1 and kind = 'booking'", [dev]));
+
+      await assert.rejects(book({ start_time: "11:00", hours: 2 }), /Clashes with “Homepage build”/);
+      await assert.rejects(book({ start_time: "13:00", hours: 6 }), /Only 4h free that day/);
+      await assert.rejects(book({ start_time: "13:00", hours: 4, work_date: addDays(day, 1) }).then(() => book({ start_time: "13:00", hours: 3, work_date: addDays(day, 2) })), /Only 2h of the job's budget is left/);
+      await assert.rejects(book({ user_id: writer }), /design or web team/);
+      const otherJob = await readyJob(tx, companyId);
+      const otherScope = (await tx.one<{ id: string }>("select id from scope_items where job_id = $1 limit 1", [otherJob]))!.id;
+      await assert.rejects(book({ scope_item_id: otherScope }), /job's scope/);
+
+      // Declining frees the time and removes the task; the booker is told why.
+      await assert.rejects(declineBooking(tx, first, " "), /Say why/);
+      const firstTask = (await tx.one<{ task_id: string }>("select task_id from bookings where id = $1", [first]))!.task_id;
+      await declineBooking(tx, first, "On leave that day");
+      assert.equal((await tx.one<{ task_id: string | null; status: string }>("select task_id, status from bookings where id = $1", [first]))!.status, "declined");
+      assert.equal(await tx.one("select 1 from tasks where id = $1", [firstTask]), null);
+      const again = await book({ start_time: "09:00", hours: 2 });
+      await cancelBooking(tx, again);
+      await assert.rejects(cancelBooking(tx, again), /no longer active/);
     });
   });
 });
