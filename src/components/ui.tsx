@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowRight, CheckCircle, Tray, Warning, WarningCircle } from
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatHours, formatMoney, pct } from "@/lib/domain/money";
+import { LogoMark } from "./Logo";
 
 export function cx(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(" ");
@@ -320,13 +321,17 @@ export function SourceNote({ sources, by }: { sources: string[]; by: string }) {
 }
 
 /** The 8gency product mark (public pages and auth). Agencies' own logos are used inside the app. */
-export function ProductMark({ className }: { className?: string }) {
+export function ProductMark({ className, size = "md" }: { className?: string; size?: "md" | "lg" }) {
+  const lg = size === "lg";
   return (
-    <span className={cx("inline-flex items-center gap-2 font-semibold tracking-tight text-ink", className)}>
-      <span aria-hidden className="grid h-8 w-8 place-items-center rounded-lg bg-brand text-sm font-bold text-brand-ink shadow-[var(--elev-xs),inset_0_1px_0_rgb(255_255_255/0.2)]">
-        8
+    <span className={cx("inline-flex items-center text-ink", lg ? "gap-3" : "gap-2.5", className)}>
+      <span className="relative grid shrink-0">
+        <span aria-hidden className="absolute -inset-1.5 rounded-[14px] bg-[#7b61ff] opacity-50 blur-[14px]" />
+        <LogoMark size={lg ? 44 : 34} className="relative" />
       </span>
-      <span className="text-lg">8gency</span>
+      <span className={cx("font-black leading-none tracking-[-0.06em]", lg ? "text-[31px]" : "text-[25px]")}>
+        8gency<span aria-hidden className="text-brand">.</span>
+      </span>
     </span>
   );
 }

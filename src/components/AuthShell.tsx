@@ -11,7 +11,7 @@ export function AuthShell({ title, subtitle, children, footer }: { title: string
     <main className="grid min-h-screen lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
       <section aria-hidden className="relative hidden overflow-hidden border-r border-line bg-surface lg:flex lg:flex-col lg:justify-between lg:p-12">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(60rem_30rem_at_-10%_-10%,color-mix(in_srgb,var(--brand)_14%,transparent),transparent_60%)]" />
-        <ProductMark className="relative" />
+        <ProductMark size="lg" className="relative" />
         <div className="relative max-w-md">
           <p className="text-3xl font-semibold leading-tight tracking-tight">The operating system for your agency.</p>
           <ul className="mt-8 space-y-3 text-sm text-ink-2">

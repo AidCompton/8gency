@@ -6,6 +6,7 @@ import { SubmitButton } from "@/components/SubmitButton";
 import { Badge, Card, PageHeader, Stat, Table, Tabs, Td, buttonClass, cx } from "@/components/ui";
 import { runAutomationsNowAction, toggleAutomationAction, useTemplateAction } from "../_actions/automations";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { BUILTINS, TEMPLATES, actionDef, triggerDef, type Step } from "@/lib/domain/automations";
 import { enabledBuiltins } from "@/lib/services/automationEngine";
 
@@ -70,7 +71,7 @@ function AutomationCard({ r }: { r: Row }) {
 export default async function AutomationsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const tab = (await searchParams).tab ?? "mine";
   const user = await requireUser();
-  requireCap(user, "settings");
+  requireCap(user, "automations");
   const data = await tenant(user, async (tx) => {
     await enabledBuiltins(tx);
     return {
@@ -109,7 +110,7 @@ export default async function AutomationsPage({ searchParams }: { searchParams: 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Active" value={active} hint={`${data.rows.length - active} switched off`} />
         <Stat label="Runs, last 7 days" value={data.stats.runs} hint="Custom automations" href="/app/automations?tab=activity" />
-        <Stat label="Client messages sent" value={data.stats.messages} hint="Last 7 days, via the Outbox" href="/app/outbox" />
+        <Stat label="Client messages sent" value={data.stats.messages} hint="Last 7 days, via the Outbox" href={can(user, "settings") ? "/app/outbox" : undefined} />
         <Stat label="Errors" value={data.stats.errors} hint={data.stats.errors ? "Check the activity log" : "All clear"} tone={data.stats.errors ? "critical" : "good"} href="/app/automations?tab=activity" />
       </div>
       <Tabs

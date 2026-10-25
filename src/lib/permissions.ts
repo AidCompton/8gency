@@ -26,7 +26,8 @@ export type Capability =
   | "manageTeam"
   | "seeTeamTime"
   | "audit"
-  | "triage";
+  | "triage"
+  | "automations";
 
 const MATRIX: Record<Capability, Role[]> = {
   seeAllJobs: ["owner", "ops", "finance", "account", "pm"],
@@ -44,6 +45,8 @@ const MATRIX: Record<Capability, Role[]> = {
   seeTeamTime: ["owner", "ops", "account", "pm"],
   audit: ["owner", "ops", "finance"],
   triage: ["owner", "ops", "account", "pm"],
+  // Everyone can build and run automations.
+  automations: ["owner", "ops", "finance", "account", "pm", "staff"],
 };
 
 export interface PermissionSubject {

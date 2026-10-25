@@ -8,7 +8,7 @@ import { UserError } from "@/lib/services/core";
 
 async function admin() {
   const user = await requireUser();
-  assertCan(user, "settings");
+  assertCan(user, "automations");
   return user;
 }
 

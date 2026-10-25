@@ -29,6 +29,9 @@
   --elev-xs: 0 1px 2px rgb(16 16 24 / 0.05);
   --elev-sm: 0 1px 2px rgb(16 16 24 / 0.04), 0 1px 3px rgb(16 16 24 / 0.06);
   --elev-md: 0 2px 4px rgb(16 16 24 / 0.04), 0 6px 16px rgb(16 16 24 / 0.08);
+  --logo-plate: transparent;
+  --logo-plate-pad: 0;
+  --logo-plate-shadow: none;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -54,6 +57,9 @@
     --elev-xs: 0 1px 2px rgb(0 0 0 / 0.4);
     --elev-sm: 0 1px 2px rgb(0 0 0 / 0.4), 0 0 0 1px rgb(255 255 255 / 0.02);
     --elev-md: 0 4px 16px rgb(0 0 0 / 0.5);
+    --logo-plate: #fff;
+    --logo-plate-pad: 4px 8px;
+    --logo-plate-shadow: 0 0 0 1px rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.4);
   }
 }
 :root[data-theme="dark"] {
@@ -79,6 +85,9 @@
   --elev-xs: 0 1px 2px rgb(0 0 0 / 0.4);
   --elev-sm: 0 1px 2px rgb(0 0 0 / 0.4), 0 0 0 1px rgb(255 255 255 / 0.02);
   --elev-md: 0 4px 16px rgb(0 0 0 / 0.5);
+  --logo-plate: #fff;
+  --logo-plate-pad: 4px 8px;
+  --logo-plate-shadow: 0 0 0 1px rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.4);
 }
 
 /* Invoice sheet: always the light palette, whatever the app theme (it previews the printed page). */
@@ -102,7 +111,8 @@
   --elev-xs: 0 1px 2px rgb(16 16 24 / 0.05);
 }
 /* Agency logos are usually drawn for light backgrounds: give them a white chip (invisible on light surfaces). */
-.logo-chip { background: #fff; border-radius: 6px; padding: 3px 6px; }
+/* Agency logos sit straight on the page in light mode; in dark mode on a white plate, so dark logos stay legible. */
+.logo-chip { background: var(--logo-plate); padding: var(--logo-plate-pad); border-radius: 8px; box-shadow: var(--logo-plate-shadow); }
 /* Automation builder canvas: n8n-style dot grid. */
 .canvas-dots { background-color: var(--bg); background-image: radial-gradient(circle, var(--border) 1.2px, transparent 1.2px); background-size: 20px 20px; }
 /* Inline-edit fields (invoice editor): look like text until hovered or focused. */

@@ -16,7 +16,7 @@ type Row = { id: string; name: string; description: string; enabled: boolean; bu
 export default async function AutomationPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await requireUser();
-  requireCap(user, "settings");
+  requireCap(user, "automations");
   const isNew = id === "new";
   if (!isNew && !/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const data = await tenant(user, async (tx) => ({

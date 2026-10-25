@@ -3,10 +3,11 @@
 //   npm run db:seed
 // Log in as owner@sundaystudio.example / demo1234 (every demo user shares the password).
 import "./env";
+import { readFileSync } from "node:fs";
 import bcrypt from "bcryptjs";
 import { closePools, withAdminTx, withTenant, type Tx } from "../src/lib/db";
 import { addDays, isWeekday, startOfMonth, addMonths, todayIn } from "../src/lib/domain/dates";
-import { addContact, createAgencyWithOwner, createCompany } from "../src/lib/services/agency";
+import { addContact, createAgencyWithOwner, createCompany, setAgencyLogo } from "../src/lib/services/agency";
 import { createInvoice, readyToBill, recordPayment, sendInvoice } from "../src/lib/services/billing";
 import { addTask, closeJob, createJob, lockScope, setJobStatus } from "../src/lib/services/jobs";
 import { createRetainer, reconcilePeriod } from "../src/lib/services/retainers";
@@ -14,6 +15,8 @@ import { createDeliverable, uploadVersion, sendToClient, clientDecision, interna
 import { absorbChangeRequest, createChangeRequest, sendChangeRequest, submitClientRequest } from "../src/lib/services/scope";
 import { logTime } from "../src/lib/services/time";
 import { runAutomations } from "../src/lib/services/automations";
+import { createBooking } from "../src/lib/services/bookings";
+import { seedChat } from "./seed-chat";
 
 const PASSWORD = "demo1234";
 const TZ = "Africa/Johannesburg";
@@ -64,27 +67,29 @@ async function main() {
   const ctx = (label: string, userId: string | null = ownerId) => ({ agencyId, userId, actorLabel: label });
 
   const people = await withTenant(ctx("Lerato Dlamini"), async (tx) => {
+    await setAgencyLogo(tx, readFileSync("scripts/demo-logo.svg"));
     await tx.q(
       `update entities set legal_name = 'Sunday Studio (Pty) Ltd', tax_number = '4000000000', registration_number = '2019/000000/07',
               address = '12 Example Street, Braamfontein, Johannesburg, 2001', bank_details = 'Example Bank · Acc 000000000 · Branch 000000' where agency_id = $1`,
       [agencyId],
     );
-    const team: [string, string, string, string, number, number][] = [
-      ["Pieter van Wyk", "ops@sundaystudio.example", "ops", "Project Manager", 380_00, 0.5],
-      ["Ayesha Patel", "finance@sundaystudio.example", "finance", "Finance Manager", 400_00, 0],
-      ["Sipho Ndlovu", "sipho@sundaystudio.example", "account", "Account Manager", 420_00, 0.55],
-      ["Jess Naidoo", "jess@sundaystudio.example", "pm", "Project Manager", 380_00, 0.6],
-      ["Kabelo Mahlangu", "kabelo@sundaystudio.example", "staff", "Senior Designer", 420_00, 0.75],
-      ["Mia Botha", "mia@sundaystudio.example", "staff", "Designer", 300_00, 0.75],
-      ["Ruan Smit", "ruan@sundaystudio.example", "staff", "Copywriter", 340_00, 0.75],
-      ["Zanele Khumalo", "zanele@sundaystudio.example", "staff", "Developer", 480_00, 0.75],
-      ["Tom Fischer", "tom@sundaystudio.example", "staff", "Social Media Manager", 280_00, 0.75],
+    const team: [string, string, string, string, number, number, string][] = [
+      ["Pieter van Wyk", "ops@sundaystudio.example", "ops", "Project Manager", 380_00, 0.5, "management"],
+      ["Ayesha Patel", "finance@sundaystudio.example", "finance", "Finance Manager", 400_00, 0, "finance"],
+      ["Sipho Ndlovu", "sipho@sundaystudio.example", "account", "Account Manager", 420_00, 0.55, "account"],
+      ["Jess Naidoo", "jess@sundaystudio.example", "pm", "Project Manager", 380_00, 0.6, "management"],
+      ["Kabelo Mahlangu", "kabelo@sundaystudio.example", "staff", "Senior Designer", 420_00, 0.75, "design"],
+      ["Mia Botha", "mia@sundaystudio.example", "staff", "Designer", 300_00, 0.75, "design"],
+      ["Ruan Smit", "ruan@sundaystudio.example", "staff", "Copywriter", 340_00, 0.75, "content"],
+      ["Zanele Khumalo", "zanele@sundaystudio.example", "staff", "Developer", 480_00, 0.75, "web"],
+      ["Tom Fischer", "tom@sundaystudio.example", "staff", "Social Media Manager", 280_00, 0.75, "social"],
     ];
     const ids: Record<string, string> = { owner: ownerId };
-    for (const [name, email, role, title, cost, target] of team) {
+    await tx.q("update users set team = 'management' where id = $1", [ownerId]);
+    for (const [name, email, role, title, cost, target, unit] of team) {
       const r = await tx.one<{ id: string }>(
-        `insert into users (agency_id, email, name, password_hash, role, title, cost_rate_cents, target_utilisation) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
-        [agencyId, email, name, hash, role, title, cost, target],
+        `insert into users (agency_id, email, name, password_hash, role, title, cost_rate_cents, target_utilisation, team) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
+        [agencyId, email, name, hash, role, title, cost, target, unit],
       );
       ids[name.split(" ")[0].toLowerCase()] = r!.id;
     }
@@ -399,6 +404,17 @@ async function main() {
     await bill(c.koc, (_k, d) => d.includes("winter brochure"), "", addDays(today, -44), true);
     // The KOC "designs approved" milestone and BCB's current month stay in ready-to-bill, and MMM's T&M time stays unbilled.
   });
+
+  // A few bookings of design and web time over the next working days.
+  const workdays = Array.from({ length: 10 }, (_, i) => addDays(today, i + 1)).filter(isWeekday);
+  await withTenant(ctx("Jess Naidoo", people.jess), async (tx) => {
+    const scopeOf = async (jobId: string) => (await tx.one<{ id: string }>("select id from scope_items where job_id = $1 order by created_at limit 1", [jobId]))!.id;
+    await createBooking(tx, { user_id: people.kabelo, job_id: jobs.guidelines, scope_item_id: await scopeOf(jobs.guidelines), work_date: workdays[0], start_time: "09:00", hours: 3, title: "Typography and colour pages" });
+    await createBooking(tx, { user_id: people.zanele, job_id: jobs.guidelines, scope_item_id: await scopeOf(jobs.guidelines), work_date: workdays[0], start_time: "10:00", hours: 4, title: "Online brand portal build" });
+    await createBooking(tx, { user_id: people.mia, job_id: jobs.guidelines, scope_item_id: await scopeOf(jobs.guidelines), work_date: workdays[1], start_time: "13:00", hours: 2.5, title: "Icon set" });
+  });
+
+  await seedChat(agencyId, people, c.vela);
 
   // Owner's internal review queue, notifications and outbox state.
   await withTenant(ctx("seed"), async (tx) => {
