@@ -1,11 +1,13 @@
 import { CheckCircle } from "@phosphor-icons/react/ssr";
 import { LogoCard } from "@/components/LogoCard";
 import { SubmitButton } from "@/components/SubmitButton";
-import { addRateAction, addUserAction, deactivateUserAction, importAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
+import { addRateAction, addUserAction, deactivateUserAction, revokeInviteAction, importAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
 import { Badge, Card, Field, Money, PageHeader, Table, Tabs, Td, buttonClass } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatDate } from "@/lib/domain/dates";
+import { TEAMS } from "@/lib/domain/bookings";
 import { can, ROLE_LABELS } from "@/lib/permissions";
+import { pendingInvites } from "@/lib/services/accountAuth";
 
 export const metadata = { title: "Settings" };
 
@@ -19,9 +21,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     agency: (await tx.one<{ name: string; brand_color: string; job_number_format: string; brief_threshold: number; bill_within_days: number; timezone: string; ai_enabled: boolean; agency_type: string }>("select * from agencies where id = $1", [tx.agencyId]))!,
     entity: (await tx.one<{ id: string; name: string; legal_name: string; currency: string; tax_label: string; tax_rate: number; tax_number: string; registration_number: string; address: string; bank_details: string; invoice_prefix: string; next_invoice_seq: number }>("select * from entities where is_default order by created_at limit 1"))!,
     rates: await tx.q<{ id: string; role_title: string; rate_cents: number; effective_from: string; company: string | null }>("select r.id, r.role_title, r.rate_cents, r.effective_from, c.name as company from rate_cards r left join companies c on c.id = r.company_id order by r.role_title, c.name nulls first, r.effective_from desc"),
-    users: await tx.q<{ id: string; name: string; email: string; role: string; title: string; weekly_hours: number; cost_rate_cents: number; target_utilisation: number; active: boolean }>("select id, name, email, role, title, weekly_hours, cost_rate_cents, target_utilisation, active from users order by active desc, name"),
+    users: await tx.q<{ id: string; name: string; email: string; role: string; title: string; weekly_hours: number; cost_rate_cents: number; target_utilisation: number; active: boolean; team: string | null }>("select id, name, email, role, title, team, weekly_hours, cost_rate_cents, target_utilisation, active from users order by active desc, name"),
     companies: await tx.q<{ id: string; name: string }>("select id, name from companies where kind = 'client' order by name"),
   }));
+  const invites = tab === "team" ? await pendingInvites(user.agency_id) : [];
   const roleTitles = [...new Set(data.rates.map((r) => r.role_title))];
   return (
     <>
@@ -101,7 +104,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       {tab === "team" && (
         <div className="space-y-4">
           <Card pad={false}>
-            <Table head={["Person", "Role", "Title (sets rate)", "Hours/wk", "Target %", ...(costs ? ["Cost/hour"] : []), ""]}>
+            <Table head={["Person", "Role", "Team", "Title (sets rate)", "Hours/wk", "Target %", ...(costs ? ["Cost/hour"] : []), ""]}>
               {data.users.map((u) => {
                 // Controls sit in their own cells and join the row's form via the `form` attribute.
                 const f = `user-${u.id}`;
@@ -111,6 +114,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                     {u.active ? (
                       <>
                         <Td><select form={f} name="role" aria-label={`Role for ${u.name}`} defaultValue={u.role} className="field-sm !w-40">{Object.entries(ROLE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Td>
+                        <Td><select form={f} name="team" aria-label={`Team for ${u.name}`} defaultValue={u.team ?? ""} className="field-sm !w-36"><option value="">No team</option>{TEAMS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Td>
                         <Td><input form={f} name="title" aria-label={`Title for ${u.name}`} defaultValue={u.title} list="roles2" className="field-sm !w-48" /></Td>
                         <Td><input form={f} name="weekly_hours" inputMode="decimal" defaultValue={u.weekly_hours} className="field-sm !w-16 text-right" aria-label={`Hours per week for ${u.name}`} /></Td>
                         <Td><input form={f} name="target_utilisation" inputMode="numeric" defaultValue={Math.round(u.target_utilisation * 100)} className="field-sm !w-16 text-right" aria-label={`Target utilisation % for ${u.name}`} /></Td>
@@ -132,7 +136,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                         </Td>
                       </>
                     ) : (
-                      <Td colSpan={costs ? 6 : 5}><Badge>Deactivated</Badge></Td>
+                      <Td colSpan={costs ? 7 : 6}><Badge>Deactivated</Badge></Td>
                     )}
                   </tr>
                 );
@@ -140,19 +144,31 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             </Table>
             <datalist id="roles2">{roleTitles.map((r) => <option key={r} value={r} />)}</datalist>
           </Card>
-          <Card title="Add a team member" className="max-w-3xl">
+          {invites.length > 0 && (
+            <Card title="Waiting to join" pad={false} className="max-w-3xl">
+              <ul className="divide-y divide-line">
+                {invites.map((i) => (
+                  <li key={i.token_hash} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                    <span><b className="font-medium">{i.name}</b> <span className="text-ink-3">{i.email} · expires {formatDate(i.expires_at.toISOString().slice(0, 10))}</span></span>
+                    <form action={revokeInviteAction}><input type="hidden" name="token_hash" value={i.token_hash} /><SubmitButton className={buttonClass("ghost", "sm")}>Cancel</SubmitButton></form>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+          <Card title="Invite a team member" className="max-w-3xl">
             <form action={addUserAction} className="grid gap-3 sm:grid-cols-3">
               <Field label="Name"><input name="name" required /></Field>
               <Field label="Email"><input type="email" name="email" required /></Field>
-              <Field label="Temporary password"><input name="password" required minLength={8} /></Field>
               <Field label="Permission role"><select name="role" defaultValue="staff">{Object.entries(ROLE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
               <Field label="Title (sets their rate)"><input name="title" list="roles2" defaultValue="Designer" /></Field>
+              <Field label="Team" hint="Design and web people can be booked by anyone."><select name="team" defaultValue="design"><option value="">No team</option>{TEAMS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Field>
               <Field label="Hours per week"><input name="weekly_hours" defaultValue="40" /></Field>
               <Field label="Target utilisation %"><input name="target_utilisation" defaultValue="70" /></Field>
               {costs && <Field label="Cost per hour"><input name="cost_rate" /></Field>}
-              <div className="flex items-end"><SubmitButton className={buttonClass("primary", "sm")}>Add</SubmitButton></div>
+              <div className="flex items-end"><SubmitButton className={buttonClass("primary", "sm")}>Send invitation</SubmitButton></div>
             </form>
-            <p className="mt-2 text-xs text-ink-3">Removing access ends sessions and timers the same day (Rule 14).</p>
+            <p className="mt-2 text-xs text-ink-3">They get an email with a link to set their own password. Removing access ends sessions and timers the same day (Rule 14).</p>
           </Card>
         </div>
       )}

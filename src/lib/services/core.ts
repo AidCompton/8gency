@@ -127,9 +127,13 @@ export async function ensureHubToken(tx: Tx, contactId: string): Promise<string>
     "select hub_token, hub_token_expires_at from contacts where id = $1",
     [contactId],
   );
-  if (c?.hub_token && (!c.hub_token_expires_at || c.hub_token_expires_at > new Date())) return c.hub_token;
+  // Sending a link is a fresh start: a reused token gets a full 60 days again.
+  if (c?.hub_token && (!c.hub_token_expires_at || c.hub_token_expires_at > new Date())) {
+    await tx.q("update contacts set hub_token_expires_at = now() + interval '60 days' where id = $1", [contactId]);
+    return c.hub_token;
+  }
   const token = randomBytes(24).toString("base64url");
-  await tx.q("update contacts set hub_token = $2, hub_token_expires_at = now() + interval '180 days' where id = $1", [contactId, token]);
+  await tx.q("update contacts set hub_token = $2, hub_token_expires_at = now() + interval '60 days' where id = $1", [contactId, token]);
   return token;
 }
 

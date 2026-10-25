@@ -1,9 +1,11 @@
 "use server";
+import { TEAMS } from "@/lib/domain/bookings";
 import { act, num, opt, str } from "@/lib/actions";
-import { hashPassword, requireUser, tenant } from "@/lib/auth";
+import { requireUser, tenant } from "@/lib/auth";
 import { toCents } from "@/lib/domain/money";
-import { assertCan, can, type Role } from "@/lib/permissions";
-import { addTeamMember, deactivateUser, setAgencyLogo } from "@/lib/services/agency";
+import { assertCan, can, ROLE_LABELS, type Role } from "@/lib/permissions";
+import { inviteStaff, revokeInvite } from "@/lib/services/accountAuth";
+import { deactivateUser, setAgencyLogo } from "@/lib/services/agency";
 import { UserError } from "@/lib/services/core";
 import { importClients, importTasks, importTime, parseCsv } from "@/lib/services/importer";
 
@@ -54,24 +56,31 @@ export async function addRateAction(fd: FormData) {
   "Rate added.");
 }
 
+const teamOf = (fd: FormData) => (TEAMS.some((t) => t.key === str(fd, "team")) ? str(fd, "team") : null);
+
+/** Invite by email: they set their own password from the link, so no password is ever shared. */
 export async function addUserAction(fd: FormData) {
   const user = await requireUser();
   assertCan(user, "manageTeam");
-  await act("/app/settings?tab=team", () =>
-    tenant(user, async (tx) => {
-      if (str(fd, "password").length < 8) throw new UserError("Set a temporary password of at least 8 characters.");
-      await addTeamMember(tx, {
-        name: str(fd, "name"),
-        email: str(fd, "email"),
-        passwordHash: await hashPassword(str(fd, "password")),
-        role: str(fd, "role") as Role,
-        title: str(fd, "title") || "Designer",
-        weekly_hours: num(fd, "weekly_hours") || 40,
-        cost_rate_cents: toCents(str(fd, "cost_rate")),
-        target_utilisation: (num(fd, "target_utilisation") || 70) / 100,
-      });
-    }),
-  "Team member added.");
+  await act("/app/settings?tab=team", async () => {
+    const role = str(fd, "role") as Role;
+    if (!(role in ROLE_LABELS)) throw new UserError("Choose a permission role.");
+    await inviteStaff(user.agency_id, { id: user.id, name: user.name }, str(fd, "email"), {
+      name: str(fd, "name"),
+      role,
+      title: str(fd, "title") || "Designer",
+      team: TEAMS.some((t) => t.key === str(fd, "team")) ? str(fd, "team") : null,
+      weekly_hours: num(fd, "weekly_hours") || 40,
+      cost_rate_cents: toCents(str(fd, "cost_rate")),
+      target_utilisation: (num(fd, "target_utilisation") || 70) / 100,
+    });
+  }, "Invitation sent. It works for 7 days.");
+}
+
+export async function revokeInviteAction(fd: FormData) {
+  const user = await requireUser();
+  assertCan(user, "manageTeam");
+  await act("/app/settings?tab=team", () => revokeInvite(user.agency_id, str(fd, "token_hash")), "Invitation cancelled.");
 }
 
 export async function updateUserAction(fd: FormData) {
@@ -80,13 +89,13 @@ export async function updateUserAction(fd: FormData) {
   await act("/app/settings?tab=team", () =>
     tenant(user, async (tx) => {
       const id = str(fd, "user_id");
-      const before = await tx.one("select role, title, weekly_hours, cost_rate_cents, target_utilisation from users where id = $1", [id]);
+      const before = await tx.one("select role, title, team, weekly_hours, cost_rate_cents, target_utilisation from users where id = $1", [id]);
       const role = str(fd, "role") as Role;
       if (id === user.id && role !== "owner" && user.role === "owner") throw new UserError("You can't remove your own owner role.");
-      await tx.q("update users set role=$2, title=$3, weekly_hours=$4, cost_rate_cents=$5, target_utilisation=$6 where id=$1", [
-        id, role, str(fd, "title"), num(fd, "weekly_hours"), toCents(str(fd, "cost_rate")), num(fd, "target_utilisation") / 100,
+      await tx.q("update users set role=$2, title=$3, weekly_hours=$4, cost_rate_cents=$5, target_utilisation=$6, team=$7 where id=$1", [
+        id, role, str(fd, "title"), num(fd, "weekly_hours"), toCents(str(fd, "cost_rate")), num(fd, "target_utilisation") / 100, teamOf(fd),
       ]);
-      await tx.audit("user.updated", "user", id, before, { role, title: str(fd, "title") });
+      await tx.audit("user.updated", "user", id, before, { role, title: str(fd, "title"), team: teamOf(fd) });
     }),
   "Saved.");
 }

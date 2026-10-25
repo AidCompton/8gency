@@ -1,10 +1,10 @@
 import "server-only";
-import bcrypt from "bcryptjs";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { adminQuery, withTenant, type Tx } from "./db";
+import { hashToken } from "./passwords";
 import { can, type Capability, type Role } from "./permissions";
 
 const COOKIE = "8g_session";
@@ -25,17 +25,7 @@ export interface SessionUser {
   base_currency: string;
 }
 
-export function hashToken(token: string) {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-export async function hashPassword(pw: string) {
-  return bcrypt.hash(pw, 10);
-}
-
-export async function verifyPassword(pw: string, hash: string) {
-  return bcrypt.compare(pw, hash);
-}
+export { hashPassword, hashToken, verifyPassword } from "./passwords";
 
 export async function createSession(userId: string, agencyId: string) {
   const token = randomBytes(32).toString("base64url");
@@ -53,6 +43,12 @@ export async function createSession(userId: string, agencyId: string) {
     path: "/",
     expires,
   });
+}
+
+/** Hash of this browser's session, so "sign out other devices" can keep it. */
+export async function currentSessionHash() {
+  const token = (await cookies()).get(COOKIE)?.value;
+  return token ? hashToken(token) : null;
 }
 
 export async function destroySession() {

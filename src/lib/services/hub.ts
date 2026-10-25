@@ -16,7 +16,7 @@ export interface HubContact {
 
 /**
  * Resolve a login-free client hub link (M06, principle 3). Tokens are random,
- * expire, and are revoked the day a contact leaves (Rule 14).
+ * expire 60 days after last use, and are revoked the day a contact leaves (Rule 14).
  */
 export async function resolveHubToken(token: string): Promise<HubContact | null> {
   if (!token || token.length < 20) return null;
@@ -26,7 +26,10 @@ export async function resolveHubToken(token: string): Promise<HubContact | null>
       where c.hub_token = $1 and c.active and (c.hub_token_expires_at is null or c.hub_token_expires_at > now())`,
     [token],
   );
-  return rows[0] ?? null;
+  const contact = rows[0] ?? null;
+  // A link expires 60 days after it was last used, not on a fixed date. Written at most about weekly.
+  if (contact) await adminQuery("update contacts set hub_token_expires_at = now() + interval '60 days' where id = $1 and (hub_token_expires_at is null or hub_token_expires_at < now() + interval '53 days')", [contact.id]);
+  return contact;
 }
 
 export function asContact<T>(contact: HubContact, fn: (tx: Tx) => Promise<T>) {

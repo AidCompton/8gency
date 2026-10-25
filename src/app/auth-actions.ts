@@ -1,43 +1,91 @@
 "use server";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { z } from "zod";
 import { act, str } from "@/lib/actions";
-import { createSession, destroySession, hashPassword, verifyPassword } from "@/lib/auth";
-import { adminQuery, withAdminTx } from "@/lib/db";
-import { createAgencyWithOwner } from "@/lib/services/agency";
+import { createSession, destroySession } from "@/lib/auth";
+import { clientIp, recordAttempt, throttle } from "@/lib/security";
+import { acceptStaffInvite, checkLogin, joinWaitlist, requestPasswordReset, resetPassword, signupWithInvite } from "@/lib/services/accountAuth";
 import { UserError } from "@/lib/services/core";
-import { AGENCY_TYPES, type AgencyType } from "@/lib/templates";
 
+/**
+ * Five wrong passwords lock an email for 15 minutes; 25 from one address lock that address.
+ * ponytail: an attacker can lock a real person out for 15 minutes by guessing at their email. Accepted: the alternative is unlimited guessing.
+ */
 export async function login(fd: FormData) {
   await act("/login", async () => {
     const email = str(fd, "email").toLowerCase();
-    const [user] = await adminQuery<{ id: string; agency_id: string; password_hash: string }>(
-      "select id, agency_id, password_hash from users where lower(email) = $1 and active",
-      [email],
-    );
-    // Same message for unknown email and wrong password.
-    if (!user || !(await verifyPassword(str(fd, "password"), user.password_hash))) throw new UserError("That email and password don't match.");
+    const ip = clientIp(await headers());
+    await throttle("login", email, 5, 15, { resetOnSuccess: true });
+    await throttle("login", `ip:${ip}`, 25, 15);
+    const user = await checkLogin(email, str(fd, "password"));
+    if (!user) {
+      await recordAttempt("login", email);
+      await recordAttempt("login", `ip:${ip}`);
+      // Same message for unknown email and wrong password.
+      throw new UserError("That email and password don't match.");
+    }
+    await recordAttempt("login", email, true);
     await createSession(user.id, user.agency_id);
     return "/app";
   });
 }
 
-const SignUp = z.object({
-  agencyName: z.string().min(2, "Agency name is required"),
-  agencyType: z.enum(AGENCY_TYPES.map((t) => t.key) as [AgencyType, ...AgencyType[]]),
-  ownerName: z.string().min(2, "Your name is required"),
-  email: z.email("Enter a valid email"),
-  password: z.string().min(8, "Use at least 8 characters for your password"),
-});
-
+/** Sign-up is closed: an agency is created only from an emailed invitation. */
 export async function signup(fd: FormData) {
-  await act("/signup", async () => {
-    const parsed = SignUp.safeParse(Object.fromEntries(fd));
-    if (!parsed.success) throw new UserError(parsed.error.issues[0].message);
-    const passwordHash = await hashPassword(parsed.data.password);
-    const { agencyId, userId } = await withAdminTx((c) => createAgencyWithOwner(c, { ...parsed.data, passwordHash }));
-    await createSession(userId, agencyId);
+  const invite = str(fd, "invite");
+  await act(`/signup?invite=${encodeURIComponent(invite)}`, async () => {
+    const made = await signupWithInvite(invite, {
+      agencyName: str(fd, "agencyName"),
+      agencyType: str(fd, "agencyType"),
+      ownerName: str(fd, "ownerName"),
+      password: str(fd, "password"),
+    });
+    await createSession(made.userId, made.agencyId);
     return "/app/settings?tab=import&welcome=1";
+  });
+}
+
+export async function acceptInviteAction(fd: FormData) {
+  const token = str(fd, "token");
+  await act(`/invite/${encodeURIComponent(token)}`, async () => {
+    const made = await acceptStaffInvite(token, str(fd, "password"));
+    await createSession(made.userId, made.agencyId);
+    return "/app/chat";
+  });
+}
+
+export async function forgotPasswordAction(fd: FormData) {
+  await act("/forgot", async () => {
+    await requestPasswordReset(str(fd, "email"), clientIp(await headers()));
+    return "/forgot?sent=1";
+  });
+}
+
+export async function resetPasswordAction(fd: FormData) {
+  const token = str(fd, "token");
+  await act(`/reset/${encodeURIComponent(token)}`, async () => {
+    if (str(fd, "password") !== str(fd, "confirm")) throw new UserError("The two passwords don't match.");
+    await resetPassword(token, str(fd, "password"));
+    return "/login?ok=" + encodeURIComponent("Password updated. Log in with your new password.");
+  });
+}
+
+export async function joinWaitlistAction(fd: FormData) {
+  await act("/waitlist", async () => {
+    // A hidden field real people never fill in: bots do. Pretend it worked.
+    if (str(fd, "website")) return "/waitlist?joined=1";
+    await joinWaitlist(
+      {
+        name: str(fd, "name"),
+        email: str(fd, "email"),
+        agencyName: str(fd, "agencyName"),
+        teamSize: Number(str(fd, "teamSize")) || null,
+        tools: { time: str(fd, "time"), projects: str(fd, "projects"), accounting: str(fd, "accounting"), email: str(fd, "mail") },
+        note: str(fd, "note"),
+      },
+      clientIp(await headers()),
+    );
+    return "/waitlist?joined=1";
   });
 }
 

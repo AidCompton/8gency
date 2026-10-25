@@ -12,7 +12,11 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:reset": "tsx scripts/db-setup.ts --reset && tsx scripts/migrate.ts && tsx scripts/seed.ts",
-    "test": "tsx --test --test-concurrency=1 tests/*.test.ts"
+    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "invite": "tsx scripts/invite-agency.ts",
+    "waitlist": "tsx scripts/waitlist.ts",
+    "db:backup": "sh scripts/db-backup.sh",
+    "db:restore-test": "sh scripts/db-restore-test.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

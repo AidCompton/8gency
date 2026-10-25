@@ -55,6 +55,19 @@ export async function revokeContactAction(fd: FormData) {
   await act(`/app/clients/${str(fd, "company_id")}`, () => tenant(user, (tx) => revokeContactAccess(tx, str(fd, "contact_id"))), "Hub access revoked.");
 }
 
+/** One click kills every live link for this client: use it when a forwarded email or a leaver is a worry. */
+export async function revokeAllHubLinksAction(fd: FormData) {
+  const user = await requireUser();
+  assertCan(user, "manageJobs");
+  const companyId = str(fd, "company_id");
+  await act(`/app/clients/${companyId}`, () =>
+    tenant(user, async (tx) => {
+      const gone = await tx.q("update contacts set hub_token = null, hub_token_expires_at = null where company_id = $1 and hub_token is not null returning id", [companyId]);
+      await tx.audit("hub.links_revoked", "company", companyId, undefined, { links: gone.length });
+    }),
+  "Every hub link for this client is switched off. Send a fresh link to anyone who still needs one.");
+}
+
 export async function sendHubLinkAction(fd: FormData) {
   const user = await requireUser();
   assertCan(user, "manageJobs");

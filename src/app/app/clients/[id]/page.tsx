@@ -2,7 +2,7 @@ import { ArrowSquareOut } from "@phosphor-icons/react/ssr";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SubmitButton } from "@/components/SubmitButton";
-import { addContactAction, addContractAction, revokeContactAction, sendHubLinkAction, sendStatusReportAction, toggleOnboardingAction, updateClientAction } from "../../_actions/clients";
+import { addContactAction, addContractAction, revokeAllHubLinksAction, revokeContactAction, sendHubLinkAction, sendStatusReportAction, toggleOnboardingAction, updateClientAction } from "../../_actions/clients";
 import { Badge, Card, Empty, Field, HealthBadge, LinkButton, Meter, Money, PageHeader, SourceNote, StatusBadge, Table, Tabs, Td, buttonClass, TextLink, StatusIcon } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatDate } from "@/lib/domain/dates";
@@ -82,6 +82,13 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                 ))}
               </ul>
             ) : <Empty>No contacts yet. Add at least one approver before anything goes to review.</Empty>}
+            {data.contacts.some((p) => p.hub_token) && can(user, "manageJobs") && (
+              <form action={revokeAllHubLinksAction} className="mt-3 border-t border-line pt-3">
+                <input type="hidden" name="company_id" value={id} />
+                <SubmitButton confirm="Switch off every hub link for this client? Anyone with an old link will need a new one." className={buttonClass("ghost", "sm") + " !text-critical-ink"}>Revoke all hub links</SubmitButton>
+                <span className="ml-2 text-xs text-ink-3">Links also expire 60 days after they were last used.</span>
+              </form>
+            )}
             {can(user, "manageJobs") && (
               <form action={addContactAction} className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-2">
                 <input type="hidden" name="company_id" value={id} />

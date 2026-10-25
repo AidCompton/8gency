@@ -23,8 +23,8 @@ export default function Landing() {
           <Link href="/login" className={buttonClass("ghost")}>
             Log in
           </Link>
-          <Link href="/signup" className={buttonClass("primary")}>
-            Start free
+          <Link href="/waitlist" className={buttonClass("primary")}>
+            Join the waitlist
           </Link>
         </nav>
       </header>
@@ -37,11 +37,11 @@ export default function Landing() {
           Staff, clients, work and money in one place. 8gency finds the work you're giving away, gets it priced and approved, and gets it invoiced.
         </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <Link href="/signup" className={buttonClass("primary") + " group h-11 px-5"}>
-            Run your Agency Health Scan <ArrowRight aria-hidden size={16} className="transition-transform group-hover:translate-x-0.5" />
+          <Link href="/waitlist" className={buttonClass("primary") + " group h-11 px-5"}>
+            Join the waitlist <ArrowRight aria-hidden size={16} className="transition-transform group-hover:translate-x-0.5" />
           </Link>
           <Link href="/login" className={buttonClass("secondary") + " h-11 px-5"}>
-            See the demo agency
+            Log in
           </Link>
         </div>
       </section>
