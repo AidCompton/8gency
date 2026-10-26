@@ -1,5 +1,7 @@
-import type { Tx } from "../db";
+import { adminQuery, type Tx } from "../db";
+import { imageInfo } from "./imageInfo";
 import { CATEGORIES, channelName, DEFAULT_CHANNELS, findMentions, type Person } from "../domain/chat";
+import { allowedMime, cleanFileName, inlineImage, MAX_AGENCY_BYTES, MAX_FILE_BYTES, MAX_FILES_PER_MESSAGE } from "../domain/chatFiles";
 import { firstName } from "../domain/text";
 import { notify, UserError } from "./core";
 
@@ -38,6 +40,23 @@ export interface ChatMessage {
   deleted: boolean;
   created_at: string;
   reactions: { emoji: string; count: number; mine: boolean; names: string[] }[];
+  /** Set on a reply: the top-level message it hangs off. */
+  parent_id: string | null;
+  reply_count: number;
+  last_reply_at: string | null;
+  files: ChatFileMeta[];
+}
+
+export interface ChatFileMeta {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  image: boolean;
+  /** Pictures only: their size, and a tiny blurred preview to show while the real one loads. */
+  width: number | null;
+  height: number | null;
+  placeholder: string | null;
 }
 
 const MAX_BODY = 4000;
@@ -79,7 +98,7 @@ const CHANNEL_SQL = `
          (me.user_id is not null) as member,
          (select count(*)::int from chat_members x where x.channel_id = c.id) as members,
          case when me.user_id is null then 0 else
-           (select count(*)::int from chat_messages m where m.channel_id = c.id and m.seq > me.last_read_seq and m.deleted_at is null and m.user_id is distinct from $1 and m.kind <> 'system') end as unread,
+           (select count(*)::int from chat_messages m where m.channel_id = c.id and m.seq > me.last_read_seq and m.deleted_at is null and m.user_id is distinct from $1 and m.kind <> 'system' and m.parent_id is null) end as unread,
          case when c.kind = 'dm' then coalesce((select json_agg(json_build_object('id', u.id, 'name', u.name) order by u.name)
                                                   from chat_members x join users u on u.id = x.user_id where x.channel_id = c.id and x.user_id <> $1), '[]') else '[]' end as people
     from chat_channels c
@@ -104,24 +123,30 @@ export async function channelFor(tx: Tx, channelId: string, userId: string) {
   return c;
 }
 
-export async function messages(tx: Tx, channelId: string, userId: string, o: { afterSeq?: number; beforeSeq?: number; since?: string; limit?: number } = {}) {
-  const rows = await tx.q<Omit<ChatMessage, "reactions" | "edited" | "deleted"> & { edited_at: Date | null; deleted_at: Date | null }>(
+/** Messages in a conversation: its top-level ones, or the replies in one thread when `parentId` is given. */
+export async function messages(tx: Tx, channelId: string, userId: string, o: { afterSeq?: number; beforeSeq?: number; since?: string; limit?: number; parentId?: string } = {}) {
+  const rows = await tx.q<Omit<ChatMessage, "reactions" | "edited" | "deleted" | "files"> & { edited_at: Date | null; deleted_at: Date | null }>(
     `select * from (
        select m.id, m.seq, m.user_id, u.name as user_name, m.kind, case when m.deleted_at is null then m.body else '' end as body, m.mentions,
-              m.edited_at, m.deleted_at, m.created_at
+              m.edited_at, m.deleted_at, m.created_at, m.parent_id,
+              (select count(*)::int from chat_messages r where r.parent_id = m.id and r.deleted_at is null) as reply_count,
+              (select max(r.created_at)::text from chat_messages r where r.parent_id = m.id and r.deleted_at is null) as last_reply_at
          from chat_messages m left join users u on u.id = m.user_id
-        where m.channel_id = $1
+        where m.channel_id = $1 and (($6::uuid is null and m.parent_id is null) or m.parent_id = $6)
           and ($2::bigint is null or m.seq > $2 or ($4::timestamptz is not null and m.updated_at > $4))
           and ($3::bigint is null or m.seq < $3)
         order by m.seq desc limit $5) x
      order by seq`,
-    [channelId, o.afterSeq ?? null, o.beforeSeq ?? null, o.since ?? null, o.limit ?? 60],
+    [channelId, o.afterSeq ?? null, o.beforeSeq ?? null, o.since ?? null, o.limit ?? 60, o.parentId ?? null],
   );
   const reactions = rows.length
     ? await tx.q<{ message_id: string; emoji: string; user_id: string; name: string }>(
         "select r.message_id, r.emoji, r.user_id, u.name from chat_reactions r join users u on u.id = r.user_id where r.message_id = any($1) order by r.emoji",
         [rows.map((r) => r.id)],
       )
+    : [];
+  const files = rows.length
+    ? await tx.q<ChatFileMeta & { message_id: string }>("select id, message_id, name, mime, size, mime like 'image/%' as image, width, height, placeholder from chat_files where message_id = any($1) order by created_at", [rows.map((r) => r.id)])
     : [];
   return rows.map(({ edited_at, deleted_at, ...m }): ChatMessage => {
     const mine = reactions.filter((r) => r.message_id === m.id);
@@ -132,6 +157,7 @@ export async function messages(tx: Tx, channelId: string, userId: string, o: { a
       created_at: new Date(m.created_at).toISOString(),
       edited: Boolean(edited_at),
       deleted: Boolean(deleted_at),
+      files: deleted_at ? [] : files.filter((f) => f.message_id === m.id).map(({ message_id: _m, ...f }) => f),
       reactions: emojis.map((e) => {
         const who = mine.filter((r) => r.emoji === e);
         return { emoji: e, count: who.length, mine: who.some((r) => r.user_id === userId), names: who.map((r) => r.name) };
@@ -144,10 +170,15 @@ export async function markRead(tx: Tx, channelId: string, userId: string, seq: n
   await tx.q("update chat_members set last_read_seq = greatest(last_read_seq, $3) where channel_id = $1 and user_id = $2", [channelId, userId, seq]);
 }
 
+/** Everything in the conversation counts as read, replies included. */
+export async function markChannelRead(tx: Tx, channelId: string, userId: string) {
+  await tx.q("update chat_members set last_read_seq = greatest(last_read_seq, coalesce((select max(seq) from chat_messages where channel_id = $1), 0)) where channel_id = $1 and user_id = $2", [channelId, userId]);
+}
+
 export async function unreadTotal(tx: Tx, userId: string) {
   return (await tx.one<{ n: number }>(
     `select count(*)::int as n from chat_members me join chat_channels c on c.id = me.channel_id and c.archived_at is null
-       join chat_messages m on m.channel_id = me.channel_id and m.seq > me.last_read_seq and m.deleted_at is null and m.user_id is distinct from me.user_id and m.kind <> 'system'
+       join chat_messages m on m.channel_id = me.channel_id and m.seq > me.last_read_seq and m.deleted_at is null and m.user_id is distinct from me.user_id and m.kind <> 'system' and m.parent_id is null
       where me.user_id = $1`,
     [userId],
   ))!.n;
@@ -166,25 +197,39 @@ const join = (tx: Tx, channelId: string, userIds: string[]) =>
     [channelId, userIds],
   );
 
-export async function sendMessage(tx: Tx, channelId: string, body: string, kind: "message" | "kudos" = "message") {
+export async function sendMessage(tx: Tx, channelId: string, body: string, kind: "message" | "kudos" = "message", opts: { parentId?: string | null; fileIds?: string[] } = {}) {
   const me = tx.userId!;
   const text = body.trim();
-  if (!text) throw new UserError("Write a message first.");
+  const fileIds = [...new Set(opts.fileIds ?? [])];
+  if (!text && !fileIds.length) throw new UserError("Write a message first.");
   if (text.length > MAX_BODY) throw new UserError(`Keep messages under ${MAX_BODY} characters.`);
+  if (fileIds.length > MAX_FILES_PER_MESSAGE) throw new UserError(`Attach up to ${MAX_FILES_PER_MESSAGE} files to a message.`);
   const c = await channelFor(tx, channelId, me);
+  let parentAuthor: string | null = null;
+  if (opts.parentId) {
+    const parent = await tx.one<{ user_id: string | null }>("select user_id from chat_messages where id = $1 and channel_id = $2 and parent_id is null and deleted_at is null and kind <> 'system'", [opts.parentId, channelId]);
+    if (!parent) throw new UserError("That message is gone, so it can't be replied to.");
+    if (kind === "kudos") throw new UserError("Kudos go in the channel, not in a thread.");
+    parentAuthor = parent.user_id;
+  }
   if (!c.member) await join(tx, channelId, [me]);
   const people = await chatPeople(tx);
   const mentions = findMentions(text, people).filter((id) => id !== me);
   if (kind === "kudos" && !mentions.length) throw new UserError("Kudos needs someone to thank: @mention them.");
   const m = await tx.one<{ id: string; seq: number }>(
-    "insert into chat_messages (agency_id, channel_id, user_id, kind, body, mentions) values ($1,$2,$3,$4,$5,$6) returning id, seq",
-    [tx.agencyId, channelId, me, kind, text, mentions],
+    "insert into chat_messages (agency_id, channel_id, user_id, kind, body, mentions, parent_id) values ($1,$2,$3,$4,$5,$6,$7) returning id, seq",
+    [tx.agencyId, channelId, me, kind, text, mentions, opts.parentId ?? null],
   );
+  if (fileIds.length) {
+    const claimed = await tx.q("update chat_files set message_id = $1 where id = any($2) and user_id = $3 and channel_id = $4 and message_id is null returning id", [m!.id, fileIds, me, channelId]);
+    if (claimed.length !== fileIds.length) throw new UserError("One of the files didn't upload properly. Attach it again.");
+  }
+  if (opts.parentId) await tx.q("update chat_messages set updated_at = now() where id = $1", [opts.parentId]);
   await markRead(tx, channelId, me, Number(m!.seq));
 
   const where = c.kind === "dm" ? "a message" : `#${c.name}`;
   const href = `/app/chat/${channelId}`;
-  const snippet = text.length > 140 ? `${text.slice(0, 140)}…` : text;
+  const snippet = text ? (text.length > 140 ? `${text.slice(0, 140)}…` : text) : "Sent a file";
   // Only tell people who can actually open the conversation.
   const readers = new Set((await tx.q<{ user_id: string }>("select user_id from chat_members where channel_id = $1", [channelId])).map((r) => r.user_id));
   const canRead = (id: string) => !c.private && c.kind === "channel" ? true : readers.has(id);
@@ -196,7 +241,42 @@ export async function sendMessage(tx: Tx, channelId: string, body: string, kind:
     href,
     dedupe: `chat:${m!.id}`,
   });
+  // The person who started a thread hears about replies, unless they were just @mentioned.
+  if (parentAuthor && parentAuthor !== me && !notifyIds.includes(parentAuthor) && canRead(parentAuthor)) {
+    await notify(tx, [parentAuthor], { kind: "chat", title: `${firstName(tx.actorLabel)} replied to your message in ${where}`, body: snippet, href, dedupe: `chat:${m!.id}` });
+  }
   return m!.id;
+}
+
+/** Keep an uploaded file for a message that's about to be written. */
+export async function saveChatFile(tx: Tx, channelId: string, upload: { name: string; bytes: Uint8Array }) {
+  await channelFor(tx, channelId, tx.userId!);
+  const name = cleanFileName(upload.name);
+  const mime = allowedMime(name);
+  if (!mime) throw new UserError("That kind of file isn't allowed. Images, PDFs, Office files, text, zips and video are.");
+  if (!upload.bytes.length) throw new UserError("That file is empty.");
+  if (upload.bytes.length > MAX_FILE_BYTES) throw new UserError("Files can be up to 10 MB.");
+  if (mime.startsWith("image/") && !inlineImage(mime, upload.bytes)) throw new UserError("That file isn't really a picture of the kind its name says.");
+  const used = (await tx.one<{ n: string }>("select coalesce(sum(size), 0) as n from chat_files"))!.n;
+  if (Number(used) + upload.bytes.length > MAX_AGENCY_BYTES) throw new UserError("Your team has used all its chat file space. Delete some files first.");
+  const info = mime.startsWith("image/") ? await imageInfo(upload.bytes) : null;
+  const row = await tx.one<{ id: string }>(
+    "insert into chat_files (agency_id, channel_id, user_id, name, mime, size, data, width, height, placeholder) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id",
+    [tx.agencyId, channelId, tx.userId, name, mime, upload.bytes.length, Buffer.from(upload.bytes), info?.width ?? null, info?.height ?? null, info?.placeholder ?? null],
+  );
+  return { id: row!.id, name, mime, size: upload.bytes.length, image: mime.startsWith("image/"), width: info?.width ?? null, height: info?.height ?? null, placeholder: info?.placeholder ?? null } satisfies ChatFileMeta;
+}
+
+/** A file's bytes, for anyone who can read the conversation it was sent in. Unsent uploads are only for the uploader. */
+export async function chatFile(tx: Tx, fileId: string) {
+  const f = await tx.one<{ name: string; mime: string; size: number; data: Buffer; channel_id: string; message_id: string | null; user_id: string | null }>(
+    "select f.name, f.mime, f.size, f.data, f.channel_id, f.message_id, f.user_id from chat_files f left join chat_messages m on m.id = f.message_id where f.id = $1 and (f.message_id is null or m.deleted_at is null)",
+    [fileId],
+  );
+  if (!f) throw new UserError("That file isn't there any more.");
+  await channelFor(tx, f.channel_id, tx.userId!);
+  if (!f.message_id && f.user_id !== tx.userId) throw new UserError("That file isn't there any more.");
+  return f;
 }
 
 async function ownMessage(tx: Tx, messageId: string, managerOk = false, isManager = false) {
@@ -219,8 +299,21 @@ export async function editMessage(tx: Tx, messageId: string, body: string) {
 /** Authors delete their own messages; owners and ops can remove anyone's. */
 export async function deleteMessage(tx: Tx, messageId: string, isManager: boolean) {
   await ownMessage(tx, messageId, true, isManager);
-  await tx.q("update chat_messages set deleted_at = now(), updated_at = now() where id = $1", [messageId]);
-  await tx.q("delete from chat_reactions where message_id = $1", [messageId]);
+  const m = await tx.one<{ parent_id: string | null }>("update chat_messages set deleted_at = now(), updated_at = now() where id = $1 returning parent_id", [messageId]);
+  if (m?.parent_id) await tx.q("update chat_messages set updated_at = now() where id = $1", [m.parent_id]);
+}
+
+/** Put back a message its author (or a manager) deleted in the last hour: the Undo behind the delete toast. */
+export async function restoreMessage(tx: Tx, messageId: string, isManager: boolean) {
+  const m = await tx.one<{ user_id: string | null; channel_id: string; parent_id: string | null }>(
+    "select user_id, channel_id, parent_id from chat_messages where id = $1 and deleted_at > now() - interval '1 hour'",
+    [messageId],
+  );
+  if (!m) throw new UserError("That message can't be restored any more.");
+  await channelFor(tx, m.channel_id, tx.userId!);
+  if (m.user_id !== tx.userId && !isManager) throw new UserError("You can only restore your own messages.");
+  await tx.q("update chat_messages set deleted_at = null, updated_at = now() where id = $1", [messageId]);
+  if (m.parent_id) await tx.q("update chat_messages set updated_at = now() where id = $1", [m.parent_id]);
 }
 
 export async function toggleReaction(tx: Tx, messageId: string, emoji: string) {
@@ -395,7 +488,7 @@ export async function chatHome(tx: Tx, userId: string): Promise<ChatHomeData> {
     ? await tx.q<HomeMessage>(
         `select distinct on (m.channel_id) ${MSG_SELECT}, false as unread
            from chat_messages m join chat_channels c on c.id = m.channel_id left join users u on u.id = m.user_id
-          where m.channel_id = any($1) and m.deleted_at is null and m.kind <> 'system' order by m.channel_id, m.seq desc`,
+          where m.channel_id = any($1) and m.deleted_at is null and m.kind <> 'system' and m.parent_id is null order by m.channel_id, m.seq desc`,
         [ids],
       )
     : [];
@@ -426,4 +519,11 @@ export async function chatHome(tx: Tx, userId: string): Promise<ChatHomeData> {
     suggestions: (await browseChannels(tx, userId)).filter((c) => !c.member).slice(0, 5),
     mentionCount: await unreadMentions(tx, userId),
   };
+}
+
+/** Uploads nobody sent with a message within a day. Run from the scheduler. */
+export async function purgeUnsentChatFiles() {
+  // Deleted messages keep their files for an hour so Undo can bring them back; after a day they are gone for good.
+  await adminQuery("delete from chat_files f using chat_messages m where m.id = f.message_id and m.deleted_at < now() - interval '1 day'");
+  return (await adminQuery("delete from chat_files where message_id is null and created_at < now() - interval '1 day' returning 1")).length;
 }

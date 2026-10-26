@@ -165,7 +165,7 @@ export function FlowBuilder({
       >
         <AutomationIcon icon={props.icon} tone={toneFor(props.kind, props.icon)} />
         <span className="min-w-0 flex-1">
-          <span className="block text-[11px] font-semibold uppercase tracking-wider text-ink-3">{props.eyebrow}</span>
+          <span className="block text-xs font-semibold uppercase tracking-wider text-ink-3">{props.eyebrow}</span>
           <span className="mt-0.5 block truncate text-sm font-semibold text-ink">{props.title}</span>
           <span className="mt-0.5 block truncate text-xs text-ink-2">{props.summary}</span>
         </span>

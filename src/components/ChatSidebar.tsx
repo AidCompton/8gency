@@ -45,7 +45,7 @@ export function ChatSidebar({ channels, current, unread, online, me, mentions, o
         >
           {icon}
           <span className="min-w-0 flex-1 truncate">{label}</span>
-          {n > 0 && <span className="tnum min-w-5 rounded-full bg-brand px-1.5 text-center text-[11px] font-semibold leading-5 text-brand-ink">{n > 99 ? "99+" : n}<span className="sr-only"> unread</span></span>}
+          {n > 0 && <span className="tnum min-w-5 rounded-full bg-brand px-1.5 text-center text-xs font-semibold leading-5 text-brand-ink">{n > 99 ? "99+" : n}<span className="sr-only"> unread</span></span>}
         </Link>
       </li>
     );
@@ -90,7 +90,7 @@ export function ChatSidebar({ channels, current, unread, online, me, mentions, o
         </Link>
         <Link href="/app/chat#mentions" onClick={onNavigate} className={cx(top, mentions > 0 && "font-semibold text-ink")}>
           <At aria-hidden size={16} /> <span className="flex-1">Mentions</span>
-          {mentions > 0 && <span className="tnum min-w-5 rounded-full bg-warning px-1.5 text-center text-[11px] font-semibold leading-5 text-black">{mentions > 99 ? "99+" : mentions}<span className="sr-only"> unread mentions</span></span>}
+          {mentions > 0 && <span className="tnum min-w-5 rounded-full bg-warning px-1.5 text-center text-xs font-semibold leading-5 text-black">{mentions > 99 ? "99+" : mentions}<span className="sr-only"> unread mentions</span></span>}
         </Link>
         <Link href="/app/chat/browse" onClick={onNavigate} className={top}><Compass aria-hidden size={16} /> Browse channels</Link>
       </div>

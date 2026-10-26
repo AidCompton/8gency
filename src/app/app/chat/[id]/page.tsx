@@ -3,7 +3,7 @@ import { ChatApp } from "@/components/ChatApp";
 import { channelTitle } from "@/lib/domain/chat";
 import { getSessionUser, requireUser, tenant, requireModule } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { channelFor, chatPeople, ensureDefaults, markRead, messages, sidebar, touchPresence, unreadMentions } from "@/lib/services/chat";
+import { channelFor, chatPeople, ensureDefaults, markChannelRead, messages, sidebar, touchPresence, unreadMentions } from "@/lib/services/chat";
 import { UserError } from "@/lib/services/core";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
@@ -33,7 +33,7 @@ export default async function ChatChannelPage({ params }: { params: Promise<{ id
     const page = await messages(tx, id, user.id, { limit: 61 });
     const list = page.slice(-60);
     const lastRead = (await tx.one<{ last_read_seq: number }>("select last_read_seq from chat_members where channel_id = $1 and user_id = $2", [id, user.id]))?.last_read_seq ?? 0;
-    if (list.length && channel.member) await markRead(tx, id, user.id, list[list.length - 1].seq);
+    if (channel.member) await markChannelRead(tx, id, user.id);
     await touchPresence(tx, user.id);
     const people = await chatPeople(tx);
     const memberIds = new Set((await tx.q<{ user_id: string }>("select user_id from chat_members where channel_id = $1", [id])).map((r) => r.user_id));

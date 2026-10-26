@@ -1,6 +1,6 @@
 import { getSessionUser, tenant } from "@/lib/auth";
 import { modulesOf } from "@/lib/domain/modules";
-import { channelFor, markRead, messages, sidebar, touchPresence, unreadMentions } from "@/lib/services/chat";
+import { channelFor, markChannelRead, messages, sidebar, touchPresence, unreadMentions } from "@/lib/services/chat";
 import { UserError } from "@/lib/services/core";
 
 /**
@@ -23,7 +23,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         const now = (await tx.one<{ now: string }>("select now()::text as now"))!.now;
         const list = await messages(tx, id, user.id, { afterSeq: after, since: since && !Number.isNaN(Date.parse(since)) ? since : undefined, limit: 200 });
         const top = list.reduce((s, m) => Math.max(s, m.seq), after);
-        if (q.get("read") === "1" && top > 0) await markRead(tx, id, user.id, top);
+        if (q.get("read") === "1" && top > 0) await markChannelRead(tx, id, user.id);
         await touchPresence(tx, user.id);
         const side = await sidebar(tx, user.id);
         const online = await tx.q<{ id: string }>("select id from users where active and last_seen_at > now() - interval '5 minutes'");

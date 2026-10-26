@@ -39,6 +39,11 @@ const nextConfig: NextConfig = {
   experimental: { serverActions: { bodySizeLimit: "50mb" } },
   async headers() {
     return [
+      // Chrome prerenders a page when the pointer lingers on a link to it ("moderate"), so the click feels instant. Next already
+      // prefetches each link's loading shell in production; this adds the full page. Chat pages are left out because loading them
+      // marks messages as read. Logging out is a form, not a link, so it can never be prerendered. Rules: public/speculation-rules.json.
+      { source: "/app/:path*", headers: [{ key: "Speculation-Rules", value: '"/speculation-rules.json"' }] },
+      { source: "/speculation-rules.json", headers: [{ key: "Content-Type", value: "application/speculationrules+json" }, { key: "Cache-Control", value: "public, max-age=3600" }] },
       // The client hub link carries a secret in its address: never pass it on as a referrer.
       { source: "/hub/:path*", headers: [...common, { key: "Referrer-Policy", value: "no-referrer" }] },
       { source: "/reset/:path*", headers: [...common, { key: "Referrer-Policy", value: "no-referrer" }] },

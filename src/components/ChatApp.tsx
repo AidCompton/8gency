@@ -1,14 +1,16 @@
 "use client";
 import {
-  ArrowDown, CaretDown, ChatsCircle, Compass, Gear, Hash, List, LockSimple, PaperPlaneRight, PencilSimple, Plus, Smiley, Trash, Trophy, UsersThree,
+  ArrowDown, CaretDown, ChatCircle, DownloadSimple, FileText, Gear, Hash, List, LockSimple, PaperPlaneRight, Paperclip, PencilSimple, Smiley, Trash, Trophy, UsersThree, X,
 } from "@phosphor-icons/react";
 import gsap from "gsap";
 import Link from "next/link";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { addMembersAction, deleteChatAction, editChatAction, joinChannelAction, leaveChannelAction, reactChatAction, sendChatAction, updateChannelAction } from "@/app/app/_actions/chat";
+import { Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useOptimistic, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { addMembersAction, deleteChatAction, editChatAction, joinChannelAction, leaveChannelAction, reactChatAction, restoreChatAction, sendChatAction, updateChannelAction } from "@/app/app/_actions/chat";
 import { CATEGORIES, CHANNEL_EMOJI, channelTitle, REACTIONS, tokenize, type Person } from "@/lib/domain/chat";
-import type { ChatChannel, ChatMessage } from "@/lib/services/chat";
+import { humanSize, MAX_FILE_BYTES, MAX_FILES_PER_MESSAGE } from "@/lib/domain/chatFiles";
+import type { ChatChannel, ChatFileMeta, ChatMessage } from "@/lib/services/chat";
 import { ChatSidebar } from "./ChatSidebar";
+import { toast } from "./Toaster";
 import { SubmitButton } from "./SubmitButton";
 import { Avatar, buttonClass, cx } from "./ui";
 
@@ -22,6 +24,34 @@ function dayLabel(iso: string) {
   if (d.toDateString() === today.toDateString()) return "Today";
   if (d.toDateString() === y.toDateString()) return "Yesterday";
   return d.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" });
+}
+
+type Optimistic = { type: "react"; id: string; emoji: string; me: string; name: string } | { type: "edit"; id: string; body: string } | { type: "delete"; id: string };
+
+/** What a reaction or an edit will look like once the server agrees, so the screen can show it straight away. */
+function applyOptimistic(list: ChatMessage[], a: Optimistic): ChatMessage[] {
+  return list.map((m) => {
+    if (m.id !== a.id) return m;
+    if (a.type === "delete") return { ...m, deleted: true, body: "", files: [], reply_count: m.reply_count };
+    if (a.type === "edit") return { ...m, body: a.body, edited: true };
+    const had = m.reactions.find((r) => r.emoji === a.emoji);
+    if (had?.mine) {
+      const reactions = m.reactions.flatMap((r) => (r.emoji !== a.emoji ? [r] : r.count > 1 ? [{ ...r, count: r.count - 1, mine: false, names: r.names.filter((n) => n !== a.name) }] : []));
+      return { ...m, reactions };
+    }
+    const reactions = had ? m.reactions.map((r) => (r.emoji === a.emoji ? { ...r, count: r.count + 1, mine: true, names: [...r.names, a.name] } : r)) : [...m.reactions, { emoji: a.emoji, count: 1, mine: true, names: [a.name] }];
+    return { ...m, reactions };
+  });
+}
+
+/** Delete straight away and offer Undo for eight seconds (the message is only hidden until then). */
+function removeWithUndo(id: string, optimistic: (a: Optimistic) => void, act: (p: Promise<{ error?: string }>) => Promise<boolean>, after?: () => void) {
+  startTransition(async () => {
+    optimistic({ type: "delete", id });
+    const ok = await act(deleteChatAction(id));
+    after?.();
+    if (ok) toast({ message: "Message deleted", undo: async () => void (await act(restoreChatAction(id)), after?.()) });
+  });
 }
 
 function Body({ text, people, me }: { text: string; people: Person[]; me: string }) {
@@ -52,11 +82,59 @@ function burst(from: HTMLElement | null) {
   }
 }
 
+/** A picture that holds its space and shows a soft blur until the real one has loaded. */
+function ChatImage({ f }: { f: ChatFileMeta }) {
+  const [loaded, setLoaded] = useState(false);
+  const sized = f.width && f.height;
+  const scale = sized ? Math.min(1, 384 / f.width!, 256 / f.height!) : 1;
+  return (
+    <a
+      href={`/api/chat/files/${f.id}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={f.name}
+      className="relative block overflow-hidden rounded-lg border border-line bg-surface-2 bg-cover bg-center"
+      style={sized ? { width: Math.round(f.width! * scale), maxWidth: "100%", aspectRatio: `${f.width} / ${f.height}`, backgroundImage: f.placeholder ? `url(${f.placeholder})` : undefined } : undefined}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={`/api/chat/files/${f.id}`}
+        alt={f.name}
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
+        ref={(el) => void (el?.complete && el.naturalWidth && setLoaded(true))}
+        className={cx("block transition-opacity duration-200", sized ? "h-full w-full object-cover" : "max-h-64 max-w-full object-contain sm:max-w-sm", loaded ? "opacity-100" : "opacity-0")}
+      />
+    </a>
+  );
+}
+
+/** Pictures show in place; other files are a download. */
+function Attachments({ files }: { files: ChatFileMeta[] }) {
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-2">
+      {files.map((f) =>
+        f.image ? (
+          <ChatImage key={f.id} f={f} />
+        ) : (
+          <a key={f.id} href={`/api/chat/files/${f.id}`} download className="flex max-w-xs items-center gap-2.5 rounded-lg border border-line bg-surface px-3 py-2 text-sm hover:bg-surface-2">
+            <FileText aria-hidden size={22} className="shrink-0 text-ink-3" />
+            <span className="min-w-0"><span className="block truncate font-medium">{f.name}</span><span className="text-xs text-ink-3">{humanSize(f.size)}</span></span>
+            <DownloadSimple aria-hidden size={16} className="shrink-0 text-ink-3" />
+          </a>
+        ),
+      )}
+    </div>
+  );
+}
+
 function Message({
-  m, people, me, isManager, grouped, onReact, onEdit, onDelete,
+  m, people, me, isManager, grouped, onReact, onEdit, onDelete, onThread,
 }: {
   m: ChatMessage; people: Member[]; me: string; isManager: boolean; grouped: boolean;
   onReact: (id: string, e: string) => void; onEdit: (id: string, body: string) => Promise<boolean>; onDelete: (id: string) => void;
+  /** Open this message's thread. Left out for replies, which can't have threads of their own. */
+  onThread?: (m: ChatMessage) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.body);
@@ -92,7 +170,7 @@ function Message({
           <div className="mt-1 space-y-2">
             <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} className="text-sm" autoFocus aria-label="Edit message" />
             <div className="flex gap-2">
-              <button type="button" className={buttonClass("primary", "sm")} onClick={async () => (await onEdit(m.id, draft)) && setEditing(false)}>Save</button>
+              <button type="button" className={buttonClass("primary", "sm")} onClick={() => (void onEdit(m.id, draft), setEditing(false))}>Save</button>
               <button type="button" className={buttonClass("ghost", "sm")} onClick={() => (setDraft(m.body), setEditing(false))}>Cancel</button>
             </div>
           </div>
@@ -102,12 +180,21 @@ function Message({
             <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed"><Body text={m.body} people={people} me={me} /></p>
           </div>
         ) : (
-          <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">
-            <Body text={m.body} people={people} me={me} />
-            {m.edited && <span className="ml-1 text-xs text-ink-3">(edited)</span>}
-          </p>
+          m.body && (
+            <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">
+              <Body text={m.body} people={people} me={me} />
+              {m.edited && <span className="ml-1 text-xs text-ink-3">(edited)</span>}
+            </p>
+          )
         )}
-        {m.reactions.length > 0 && (
+        {!m.deleted && m.files.length > 0 && <Attachments files={m.files} />}
+        {onThread && m.reply_count > 0 && (
+          <button type="button" onClick={() => onThread(m)} className="mt-1 inline-flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-xs font-medium text-brand hover:bg-brand/10">
+            <ChatCircle aria-hidden size={14} /> {m.reply_count} {m.reply_count === 1 ? "reply" : "replies"}
+            {m.last_reply_at && <span className="font-normal text-ink-3">· last {time(m.last_reply_at)}</span>}
+          </button>
+        )}
+        {!m.deleted && m.reactions.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
             {m.reactions.map((r) => (
               <button
@@ -140,6 +227,9 @@ function Message({
               </span>
             )}
           </span>
+          {onThread && m.kind !== "kudos" && (
+            <button type="button" onClick={() => onThread(m)} aria-label="Reply in thread" title="Reply in thread" className="grid h-7 w-7 place-items-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink"><ChatCircle aria-hidden size={16} /></button>
+          )}
           {mine && (
             <button type="button" onClick={() => (setDraft(m.body), setEditing(true))} aria-label="Edit message" className="grid h-7 w-7 place-items-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink"><PencilSimple aria-hidden size={15} /></button>
           )}
@@ -152,7 +242,7 @@ function Message({
   );
 }
 
-function Composer({ channel, people, me, onSent }: { channel: ChatChannel; people: Member[]; me: string; onSent: (kudos: boolean, el: HTMLElement | null) => void }) {
+function Composer({ channel, people, me, onSent, parentId }: { channel: ChatChannel; people: Member[]; me: string; onSent: (kudos: boolean, el: HTMLElement | null) => void; parentId?: string }) {
   const [text, setText] = useState("");
   const [kudos, setKudos] = useState(false);
   const [error, setError] = useState("");
@@ -161,7 +251,12 @@ function Composer({ channel, people, me, onSent }: { channel: ChatChannel; peopl
   const [pick, setPick] = useState(0);
   const ref = useRef<HTMLTextAreaElement>(null);
   const sendRef = useRef<HTMLButtonElement>(null);
-  const draftKey = `8g-chat-draft:${channel.id}`;
+  const draftKey = `8g-chat-draft:${parentId ?? channel.id}`;
+  const [files, setFiles] = useState<ChatFileMeta[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const picker = useRef<HTMLInputElement>(null);
+  // One key per message being written; kept when a send fails so pressing send again can't post it twice.
+  const sendKey = useRef(crypto.randomUUID());
 
   useEffect(() => {
     try {
@@ -208,14 +303,38 @@ function Composer({ channel, people, me, onSent }: { channel: ChatChannel; peopl
     });
   };
 
+  const attach = async (picked: File[]) => {
+    setError("");
+    for (const f of picked) {
+      if (files.length + 1 > MAX_FILES_PER_MESSAGE) return setError(`Attach up to ${MAX_FILES_PER_MESSAGE} files to a message.`);
+      if (f.size > MAX_FILE_BYTES) {
+        setError(`${f.name} is over 10 MB.`);
+        continue;
+      }
+      setUploading((n) => n + 1);
+      const body = new FormData();
+      body.set("file", f);
+      // Same Idempotency-Key on the retry, so a dropped connection can't store the file twice.
+      const key = crypto.randomUUID();
+      const post = () => fetch(`/api/chat/${channel.id}/files`, { method: "POST", body, headers: { "Idempotency-Key": key } });
+      const res = await post().catch(() => post().catch(() => null));
+      setUploading((n) => n - 1);
+      const data = await res?.json().catch(() => null);
+      if (!res?.ok || !data?.id) setError(data?.error ?? `Couldn't upload ${f.name}.`);
+      else setFiles((cur) => [...cur, data as ChatFileMeta]);
+    }
+  };
+
   const send = async () => {
-    if (!text.trim() || busy) return;
+    if ((!text.trim() && !files.length) || busy || uploading) return;
     setBusy(true);
     setError("");
-    const r = await sendChatAction(channel.id, text, kudos);
+    const r = await sendChatAction(channel.id, text, kudos, { parentId, fileIds: files.map((f) => f.id), key: sendKey.current });
     setBusy(false);
     if (r.error) return setError(r.error);
+    sendKey.current = crypto.randomUUID();
     setText("");
+    setFiles([]);
     onSent(kudos, sendRef.current);
     setKudos(false);
     ref.current?.focus();
@@ -235,7 +354,7 @@ function Composer({ channel, people, me, onSent }: { channel: ChatChannel; peopl
 
   const where = channel.kind === "dm" ? channelTitle(channel) : `#${channel.name}`;
   return (
-    <div className="relative border-t border-line p-3">
+    <div className="safe-bottom relative border-t border-line px-3 pt-3">
       {matches.length > 0 && (
         <ul role="listbox" aria-label="Mention someone" className="absolute bottom-full left-3 z-10 mb-1 w-72 overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-md">
           {matches.map((p, i) => (
@@ -257,13 +376,31 @@ function Composer({ channel, people, me, onSent }: { channel: ChatChannel; peopl
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKey}
           rows={1}
-          placeholder={kudos ? "Thank someone for something great…" : `Message ${where}`}
+          onPaste={(e) => {
+            const pasted = [...e.clipboardData.files];
+            if (pasted.length) (e.preventDefault(), void attach(pasted));
+          }}
+          placeholder={kudos ? "Thank someone for something great…" : parentId ? "Reply…" : `Message ${where}`}
           aria-label={`Message ${where}`}
           className="!min-h-0 resize-none !border-0 !bg-transparent px-3 py-2.5 text-[15px] !shadow-none focus:!ring-0"
         />
+        {(files.length > 0 || uploading > 0) && (
+          <ul className="flex flex-wrap gap-1.5 px-3 pb-2">
+            {files.map((f) => (
+              <li key={f.id} className="inline-flex max-w-[14rem] items-center gap-1.5 rounded-lg bg-surface-2 py-1 pl-2 pr-1 text-xs">
+                <FileText aria-hidden size={14} className="shrink-0 text-ink-3" />
+                <span className="truncate">{f.name}</span>
+                <button type="button" onClick={() => setFiles((cur) => cur.filter((x) => x.id !== f.id))} aria-label={`Remove ${f.name}`} className="grid h-5 w-5 place-items-center rounded text-ink-3 hover:bg-surface hover:text-ink"><X aria-hidden size={12} /></button>
+              </li>
+            ))}
+            {uploading > 0 && <li className="px-2 py-1 text-xs text-ink-3">Uploading…</li>}
+          </ul>
+        )}
         <div className="flex items-center justify-between gap-2 px-2 pb-2">
           <div className="flex items-center gap-1">
-            <button
+            <input ref={picker} type="file" multiple hidden onChange={(e) => (void attach([...(e.target.files ?? [])]), (e.target.value = ""))} />
+            <button type="button" onClick={() => picker.current?.click()} title="Attach files" aria-label="Attach files" className="grid h-8 w-8 place-items-center rounded-lg text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"><Paperclip aria-hidden size={16} /></button>
+            {!parentId && <button
               type="button"
               onClick={() => setKudos(!kudos)}
               aria-pressed={kudos}
@@ -271,10 +408,10 @@ function Composer({ channel, people, me, onSent }: { channel: ChatChannel; peopl
               className={cx("inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors", kudos ? "bg-brand/15 text-brand" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}
             >
               <Trophy aria-hidden size={16} weight={kudos ? "fill" : "regular"} /> Kudos
-            </button>
-            <span className="hidden text-xs text-ink-3 sm:inline">**bold** _italic_ `code` · @ to mention · Shift+Enter for a new line</span>
+            </button>}
+            <span className={cx("hidden text-xs text-ink-3", !parentId && "xl:inline")}>**bold** _italic_ `code` · @ to mention · Shift+Enter for a new line</span>
           </div>
-          <button ref={sendRef} type="button" onClick={() => void send()} disabled={!text.trim() || busy} aria-label="Send" className={cx(buttonClass("primary", "sm"), "!px-2.5")}>
+          <button ref={sendRef} type="button" onClick={() => void send()} disabled={(!text.trim() && !files.length) || busy || uploading > 0} aria-label="Send" className={cx(buttonClass("primary", "sm"), "!px-2.5")}>
             <PaperPlaneRight aria-hidden size={16} weight="fill" />
           </button>
         </div>
@@ -349,6 +486,70 @@ function Settings({ channel, members, people, isManager, me }: { channel: ChatCh
   );
 }
 
+/** One message and its replies, beside the conversation. */
+function ThreadPanel({ channel, parent, people, me, isManager, act, onClose, onChanged }: {
+  channel: ChatChannel; parent: ChatMessage; people: Member[]; me: string; isManager: boolean;
+  act: (p: Promise<{ error?: string }>) => Promise<boolean>; onClose: () => void; onChanged: () => void;
+}) {
+  const [replies, setReplies] = useState<ChatMessage[]>([]);
+  const [shownReplies, optimistic] = useOptimistic(replies, applyOptimistic);
+  const myName = people.find((p) => p.id === me)?.name ?? "You";
+  const after = useRef(0);
+  const since = useRef<string | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const load = useCallback(async () => {
+    const q = new URLSearchParams({ after: String(after.current), read: document.visibilityState === "visible" ? "1" : "0", ...(since.current ? { since: since.current } : {}) });
+    const res = await fetch(`/api/chat/${channel.id}/thread/${parent.id}?${q}`, { cache: "no-store" }).catch(() => null);
+    if (!res?.ok) return;
+    const data: { now: string; replies: ChatMessage[] } = await res.json();
+    since.current = data.now;
+    after.current = data.replies.reduce((n, m) => Math.max(n, m.seq), after.current);
+    if (!data.replies.length) return;
+    setReplies((cur) => {
+      const byId = new Map(cur.map((m) => [m.id, m]));
+      for (const m of data.replies) byId.set(m.id, m);
+      return [...byId.values()].sort((a, b) => a.seq - b.seq);
+    });
+  }, [channel.id, parent.id]);
+  useEffect(() => {
+    void load();
+    const t = setInterval(load, 3000);
+    const wake = () => void load();
+    window.addEventListener("focus", wake);
+    window.addEventListener("online", wake);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("focus", wake);
+      window.removeEventListener("online", wake);
+    };
+  }, [load]);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [replies.length]);
+  const handlers = {
+    onReact: (id: string, e: string) => startTransition(async () => (optimistic({ type: "react", id, emoji: e, me, name: myName }), await act(reactChatAction(id, e)), await load())),
+    onEdit: (id: string, body: string) => new Promise<boolean>((done) => startTransition(async () => (optimistic({ type: "edit", id, body }), done(await act(editChatAction(id, body))), await load()))),
+    onDelete: (id: string) => removeWithUndo(id, optimistic, act, () => (void load(), onChanged())),
+  };
+  return (
+    <aside aria-label="Thread" className="flex w-[22rem] shrink-0 flex-col border-l border-line bg-surface max-lg:fixed max-lg:inset-0 max-lg:z-40 max-lg:w-full">
+      <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-2.5">
+        <div className="min-w-0"><h2 className="font-semibold">Thread</h2><p className="truncate text-xs text-ink-3">{channel.kind === "dm" ? channelTitle(channel) : `#${channel.name}`}</p></div>
+        <button type="button" onClick={onClose} aria-label="Close thread" className="grid h-8 w-8 place-items-center rounded-lg text-ink-3 hover:bg-surface-2 hover:text-ink"><X aria-hidden size={16} /></button>
+      </header>
+      <div ref={box} className="min-h-0 flex-1 overflow-y-auto py-2">
+        <Message m={parent} people={people} me={me} isManager={isManager} grouped={false} onReact={handlers.onReact} onEdit={handlers.onEdit} onDelete={(id) => removeWithUndo(id, optimistic, act, onChanged)} />
+        <div className="my-2 flex items-center gap-3 px-4 text-xs font-medium text-ink-3" role="separator"><span className="h-px flex-1 bg-line" /> {replies.length} {replies.length === 1 ? "reply" : "replies"} <span className="h-px flex-1 bg-line" /></div>
+        {shownReplies.map((m, i) => (
+          <Message key={m.id} m={m} people={people} me={me} isManager={isManager} grouped={i > 0 && replies[i - 1].user_id === m.user_id && Date.parse(m.created_at) - Date.parse(replies[i - 1].created_at) < 5 * 60_000} {...handlers} />
+        ))}
+      </div>
+      <Composer channel={channel} people={people} me={me} parentId={parent.id} onSent={() => (void load(), onChanged())} />
+    </aside>
+  );
+}
+
 export function ChatApp({
   me, isManager, channel, channels, people, members, initial, lastRead, hasMore, mentions: mentions0,
 }: {
@@ -357,16 +558,19 @@ export function ChatApp({
 }) {
   const [list, setList] = useState(initial);
   const [more, setMore] = useState(hasMore);
+  const myName = people.find((p) => p.id === me)?.name ?? "You";
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [online, setOnline] = useState(new Set(people.filter((p) => p.online).map((p) => p.id)));
   const [mentions, setMentions] = useState(mentions0);
   const [drawer, setDrawer] = useState(false);
   const [below, setBelow] = useState(0);
+  const [threadId, setThreadId] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const after = useRef(initial.reduce((s, m) => Math.max(s, m.seq), 0));
   const since = useRef<string | null>(null);
   const stick = useRef(true);
   const peopleNow = useMemo(() => people.map((p) => ({ ...p, online: online.has(p.id) })), [people, online]);
+  const [shown, optimistic] = useOptimistic(list, applyOptimistic);
 
   const merge = useCallback((incoming: ChatMessage[]) => {
     if (!incoming.length) return;
@@ -395,8 +599,16 @@ export function ChatApp({
   useEffect(() => {
     const t = setInterval(poll, 3000);
     const wake = () => document.visibilityState === "visible" && void poll();
+    // Refetch when the tab comes back, the window is focused, or the network returns.
     document.addEventListener("visibilitychange", wake);
-    return () => (clearInterval(t), document.removeEventListener("visibilitychange", wake));
+    window.addEventListener("focus", wake);
+    window.addEventListener("online", wake);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", wake);
+      window.removeEventListener("focus", wake);
+      window.removeEventListener("online", wake);
+    };
   }, [poll]);
 
   // Open at the first unread message, else the bottom; then follow new messages while at the bottom.
@@ -440,13 +652,14 @@ export function ChatApp({
     return !r.error;
   };
 
+  const threadParent = threadId ? list.find((m) => m.id === threadId && !m.deleted) ?? null : null;
   const title = channelTitle(channel);
   const client = channel.company_id ? { id: channel.company_id, name: channel.company_name } : null;
   let lastDay = "";
 
   return (
-    <div className="-mx-4 -my-6 flex h-[calc(100dvh-7.5rem)] overflow-hidden border-line bg-surface sm:-mx-6 md:h-[calc(100dvh-4rem)] lg:-mx-8 lg:-my-8">
-      <aside className={cx("w-64 shrink-0 border-r border-line bg-surface-2/40 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-72 max-md:bg-surface max-md:shadow-md", drawer ? "" : "max-md:hidden")}>
+    <div data-bleed className="-mx-4 -my-6 flex h-[calc(100dvh-7.5rem)] overflow-hidden border-line bg-surface sm:-mx-6 md:h-[calc(100dvh-4rem)] lg:-mx-8 lg:-my-8">
+      <aside className={cx("w-64 shrink-0 border-r border-line bg-surface-2/40 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-72 max-md:bg-surface max-md:pb-[env(safe-area-inset-bottom)] max-md:pt-[env(safe-area-inset-top)] max-md:shadow-md", drawer ? "" : "max-md:hidden")}>
         <ChatSidebar channels={channels} current={channel.id} unread={unread} online={online} me={me} mentions={mentions} onNavigate={() => setDrawer(false)} />
       </aside>
       {drawer && <button type="button" aria-label="Close conversations" onClick={() => setDrawer(false)} className="fixed inset-0 z-30 bg-black/40 md:hidden" />}
@@ -490,11 +703,11 @@ export function ChatApp({
               </div>
             </div>
           )}
-          {list.map((m, i) => {
+          {shown.map((m, i) => {
             const day = dayLabel(m.created_at);
             const showDay = day !== lastDay;
             lastDay = day;
-            const prev = list[i - 1];
+            const prev = shown[i - 1];
             const grouped = !showDay && !!prev && prev.user_id === m.user_id && prev.kind === "message" && m.kind === "message" && Date.parse(m.created_at) - Date.parse(prev.created_at) < 5 * 60_000 && !(prev.seq <= lastRead && m.seq > lastRead);
             const firstNew = m.seq > lastRead && (!prev || prev.seq <= lastRead) && m.user_id !== me && lastRead > 0;
             return (
@@ -515,9 +728,10 @@ export function ChatApp({
                   me={me}
                   isManager={isManager}
                   grouped={grouped}
-                  onReact={(id, e) => void act(reactChatAction(id, e))}
-                  onEdit={(id, body) => act(editChatAction(id, body))}
-                  onDelete={(id) => confirm("Delete this message?") && void act(deleteChatAction(id))}
+                  onReact={(id, e) => startTransition(async () => (optimistic({ type: "react", id, emoji: e, me, name: myName }), void (await act(reactChatAction(id, e)))))}
+                  onEdit={(id, body) => new Promise<boolean>((done) => startTransition(async () => (optimistic({ type: "edit", id, body }), done(await act(editChatAction(id, body))))))}
+                  onDelete={(id) => removeWithUndo(id, optimistic, act)}
+                  onThread={(msg) => setThreadId(msg.id)}
                 />
               </Fragment>
             );
@@ -556,6 +770,9 @@ export function ChatApp({
           }}
         />
       </section>
+      {threadParent && (
+        <ThreadPanel channel={channel} parent={threadParent} people={peopleNow} me={me} isManager={isManager} act={act} onClose={() => setThreadId(null)} onChanged={() => void poll()} />
+      )}
     </div>
   );
 }

@@ -80,7 +80,7 @@ export default async function AutomationPage({ params }: { params: Promise<{ id:
                 <div className="flex w-64 items-start gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-sm">
                   <AutomationIcon icon={n.icon} tone={toneFor(n.kind, n.icon)} />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[11px] font-semibold uppercase tracking-wider text-ink-3">{n.eyebrow}</span>
+                    <span className="block text-xs font-semibold uppercase tracking-wider text-ink-3">{n.eyebrow}</span>
                     <span className="mt-0.5 block text-sm font-semibold">{n.label}</span>
                     <span className="mt-0.5 block text-xs text-ink-2">{n.detail}</span>
                   </span>

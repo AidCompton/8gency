@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { CheckCircle } from "@phosphor-icons/react/ssr";
+import { CaretRight, CheckCircle } from "@phosphor-icons/react/ssr";
+import { Dialog } from "@/components/Dialog";
 import { LogoCard } from "@/components/LogoCard";
 import { SubmitButton } from "@/components/SubmitButton";
 import { addRateAction, addUserAction, deactivateUserAction, revokeInviteAction, updateModulesAction, importAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
-import { Badge, Card, Field, Money, PageHeader, Table, Tabs, Td, buttonClass } from "@/components/ui";
+import { Avatar, Badge, Card, Field, Money, PageHeader, Table, Tabs, Td, buttonClass } from "@/components/ui";
 import { requireCap, requireUser, tenant } from "@/lib/auth";
 import { formatDate } from "@/lib/domain/dates";
 import { TEAMS } from "@/lib/domain/bookings";
@@ -106,45 +107,55 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
       {tab === "team" && (
         <div className="space-y-4">
-          <Card pad={false}>
-            <Table head={["Person", "Role", "Team", "Title (sets rate)", "Hours/wk", "Target %", ...(costs ? ["Cost/hour"] : []), ""]}>
-              {data.users.map((u) => {
-                // Controls sit in their own cells and join the row's form via the `form` attribute.
-                const f = `user-${u.id}`;
-                return (
-                  <tr key={u.id} className={u.active ? "" : "opacity-50"}>
-                    <Td><b>{u.name}</b><div className="text-xs text-ink-3">{u.email}</div></Td>
-                    {u.active ? (
+          <Card pad={false} className="max-w-4xl">
+            <ul className="divide-y divide-line">
+              {data.users.map((u) => (
+                <li key={u.id} className={u.active ? "" : "opacity-60"}>
+                  <Dialog
+                    title={u.name}
+                    subtitle={u.email}
+                    triggerLabel={`Edit ${u.name}`}
+                    triggerClassName="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2 first:rounded-t-xl last:rounded-b-xl"
+                    trigger={
                       <>
-                        <Td><select form={f} name="role" aria-label={`Role for ${u.name}`} defaultValue={u.role} className="field-sm !w-40">{Object.entries(ROLE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Td>
-                        <Td><select form={f} name="team" aria-label={`Team for ${u.name}`} defaultValue={u.team ?? ""} className="field-sm !w-36"><option value="">No team</option>{TEAMS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Td>
-                        <Td><input form={f} name="title" aria-label={`Title for ${u.name}`} defaultValue={u.title} list="roles2" className="field-sm !w-48" /></Td>
-                        <Td><input form={f} name="weekly_hours" inputMode="decimal" defaultValue={u.weekly_hours} className="field-sm !w-16 text-right" aria-label={`Hours per week for ${u.name}`} /></Td>
-                        <Td><input form={f} name="target_utilisation" inputMode="numeric" defaultValue={Math.round(u.target_utilisation * 100)} className="field-sm !w-16 text-right" aria-label={`Target utilisation % for ${u.name}`} /></Td>
-                        {costs && <Td><input form={f} name="cost_rate" inputMode="decimal" defaultValue={(u.cost_rate_cents / 100).toFixed(2)} className="field-sm !w-24 text-right" aria-label={`Cost per hour for ${u.name}`} /></Td>}
-                        <Td>
-                          <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-                            <form id={f} action={updateUserAction}>
-                              <input type="hidden" name="user_id" value={u.id} />
-                              {!costs && <input type="hidden" name="cost_rate" value={(u.cost_rate_cents / 100).toFixed(2)} />}
-                              <SubmitButton className={buttonClass("secondary", "sm")}>Save</SubmitButton>
-                            </form>
-                            {u.id !== user.id && (
-                              <form action={deactivateUserAction}>
-                                <input type="hidden" name="user_id" value={u.id} />
-                                <SubmitButton confirm={`Remove ${u.name}'s access? Their sessions and timers end today.`} className={buttonClass("danger", "sm")}>Remove</SubmitButton>
-                              </form>
-                            )}
-                          </div>
-                        </Td>
+                        <Avatar name={u.name} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{u.name}</span>
+                          <span className="block truncate text-sm text-ink-3">{u.email}</span>
+                        </span>
+                        {u.active ? <Badge tone={u.role === "owner" ? "brand" : "neutral"}>{ROLE_LABELS[u.role as keyof typeof ROLE_LABELS] ?? u.role}</Badge> : <Badge>Deactivated</Badge>}
+                        <CaretRight aria-hidden size={16} className="shrink-0 text-ink-3" />
                       </>
+                    }
+                  >
+                    {u.active ? (
+                      <div className="space-y-6">
+                        <form action={updateUserAction} className="grid gap-4 sm:grid-cols-2">
+                          <input type="hidden" name="user_id" value={u.id} />
+                          {!costs && <input type="hidden" name="cost_rate" value={(u.cost_rate_cents / 100).toFixed(2)} />}
+                          <Field label="Permission role"><select name="role" defaultValue={u.role}>{Object.entries(ROLE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+                          <Field label="Team" hint="Design and web people can be booked by anyone."><select name="team" defaultValue={u.team ?? ""}><option value="">No team</option>{TEAMS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Field>
+                          <Field label="Title" hint="Sets their billing rate." className="sm:col-span-2"><input name="title" defaultValue={u.title} list="roles2" /></Field>
+                          <Field label="Hours per week"><input name="weekly_hours" inputMode="decimal" defaultValue={u.weekly_hours} /></Field>
+                          <Field label="Target billable %"><input name="target_utilisation" inputMode="numeric" defaultValue={Math.round(u.target_utilisation * 100)} /></Field>
+                          {costs && <Field label="Cost per hour (R)" hint="What they cost you, never shown to clients."><input name="cost_rate" inputMode="decimal" defaultValue={(u.cost_rate_cents / 100).toFixed(2)} /></Field>}
+                          <div className="flex justify-end gap-2 sm:col-span-2"><SubmitButton className={buttonClass("primary")}>Save changes</SubmitButton></div>
+                        </form>
+                        {u.id !== user.id && (
+                          <form action={deactivateUserAction} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-critical/25 bg-critical/5 px-4 py-3">
+                            <input type="hidden" name="user_id" value={u.id} />
+                            <p className="min-w-0 flex-1 text-sm text-ink-2">Removing access ends their sessions and timers today.</p>
+                            <SubmitButton confirm={`Remove ${u.name}'s access? Their sessions and timers end today.`} className={buttonClass("danger")}>Remove access</SubmitButton>
+                          </form>
+                        )}
+                      </div>
                     ) : (
-                      <Td colSpan={costs ? 7 : 6}><Badge>Deactivated</Badge></Td>
+                      <p className="text-sm text-ink-2">{u.name} no longer has access. Their time and history stay on record.</p>
                     )}
-                  </tr>
-                );
-              })}
-            </Table>
+                  </Dialog>
+                </li>
+              ))}
+            </ul>
             <datalist id="roles2">{roleTitles.map((r) => <option key={r} value={r} />)}</datalist>
           </Card>
           {invites.length > 0 && (
@@ -212,11 +223,16 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <form action={importAction} className="space-y-3">
               <Field label="What's in the file?">
                 <select name="kind" defaultValue="time">
-                  <option value="clients">Clients (name, code, billing email, po required, payment terms)</option>
-                  <option value="time">Time (Harvest / Toggl export: date, client, project, task, hours, email, billable, notes)</option>
-                  <option value="tasks">Tasks (Asana / Monday / ClickUp / Trello: name, project, client, assignee email, due date, status)</option>
+                  <option value="clients">Clients</option>
+                  <option value="time">Time entries</option>
+                  <option value="tasks">Tasks</option>
                 </select>
               </Field>
+              <dl className="space-y-1.5 rounded-lg bg-surface-2/60 px-3.5 py-3 text-xs text-ink-2">
+                <div><dt className="inline font-medium text-ink">Clients: </dt><dd className="inline">name, code, billing email, PO required, payment terms</dd></div>
+                <div><dt className="inline font-medium text-ink">Time entries (Harvest or Toggl export): </dt><dd className="inline">date, client, project, task, hours, email, billable, notes</dd></div>
+                <div><dt className="inline font-medium text-ink">Tasks (Asana, Monday, ClickUp or Trello): </dt><dd className="inline">name, project, client, assignee email, due date, status</dd></div>
+              </dl>
               <Field label="CSV file"><input type="file" name="file" accept=".csv,text/csv" required /></Field>
               <SubmitButton className={buttonClass("primary", "sm")}>Import</SubmitButton>
             </form>

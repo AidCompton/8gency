@@ -5,7 +5,9 @@ import { confirmSuggestionsAction, deleteTimeAction, logTimeAction } from "../_a
 import { Badge, Card, Empty, Field, Meter, PageHeader, Table, Td, buttonClass } from "@/components/ui";
 import { requireUser, tenant } from "@/lib/auth";
 import { addDays, formatShort, startOfWeek, todayIn, workingDays } from "@/lib/domain/dates";
+import { modulesOf } from "@/lib/domain/modules";
 import { can } from "@/lib/permissions";
+import { bookingsBetween } from "@/lib/services/bookings";
 import { TIME_CATEGORIES, timesheetCompliance, timesheetSuggestions, weekEntries } from "@/lib/services/time";
 
 export const metadata = { title: "Time" };
@@ -19,6 +21,7 @@ export default async function TimePage({ searchParams }: { searchParams: Promise
   const days = Array.from({ length: 7 }, (_, i) => addDays(week, i));
   const data = await tenant(user, async (tx) => ({
     entries: await weekEntries(tx, user.id, week, addDays(week, 6)),
+    booked: modulesOf(user.modules).bookings ? await bookingsBetween(tx, week, addDays(week, 6), { userId: user.id }) : [],
     suggestions: await timesheetSuggestions(tx, user.id, day),
     me: (await tx.one<{ weekly_hours: number; target_utilisation: number }>("select weekly_hours, target_utilisation from users where id = $1", [user.id]))!,
     options: await tx.q<{ job_id: string; task_id: string | null; label: string }>(
@@ -47,16 +50,31 @@ export default async function TimePage({ searchParams }: { searchParams: Promise
       <div className="mb-5 grid grid-cols-7 gap-1.5">
         {days.map((d) => {
           const h = data.entries.filter((e) => e.work_date === d).reduce((s, e) => s + e.hours, 0);
+          const planned = data.booked.filter((b) => b.work_date === d).reduce((s, b) => s + b.hours, 0);
           return (
             <Link key={d} href={`/app/time?day=${d}`} className={`rounded-lg border p-2 text-center ${d === day ? "border-brand bg-brand/10" : "border-line bg-surface hover:bg-surface-2"}`}>
               <div className="text-xs text-ink-3">{new Date(`${d}T00:00:00Z`).toLocaleDateString("en-ZA", { weekday: "short", timeZone: "UTC" })} {d.slice(8)}</div>
               <div className="tnum font-semibold">{h ? `${h}h` : "—"}</div>
+              <div className={`tnum text-xs ${planned ? "text-brand" : "invisible"}`} title="Hours booked on you">{planned ? `${planned}h booked` : "·"}</div>
             </Link>
           );
         })}
       </div>
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-4">
+          {data.booked.length > 0 && (
+            <Card title="Booked for you this week" pad={false} actions={<span className="text-xs text-ink-3">{Math.round(data.booked.reduce((s, b) => s + b.hours, 0) * 10) / 10}h planned</span>}>
+              <ul className="divide-y divide-line">
+                {data.booked.map((b) => (
+                  <li key={b.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                    <span className="tnum w-24 shrink-0 text-ink-3">{new Date(`${b.work_date}T00:00:00Z`).toLocaleDateString("en-ZA", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })} {b.start_time}</span>
+                    <span className="min-w-0 flex-1"><Link href={`/app/jobs/${b.job_id}`} className="font-medium hover:underline">{b.title}</Link><span className="block truncate text-xs text-ink-3">{b.job_label}{b.booked_by_name ? ` · booked by ${b.booked_by_name}` : ""}</span></span>
+                    <span className="tnum">{b.hours}h</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
           <Card title={`Suggested for ${formatShort(day)}`}>
             {data.suggestions.length ? (
               <form action={confirmSuggestionsAction} className="space-y-2">

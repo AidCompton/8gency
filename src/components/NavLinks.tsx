@@ -5,6 +5,8 @@ import {
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { goKeys } from "@/lib/domain/shortcuts";
+import { Kbd, shortcutText, useIsMac } from "./Kbd";
 import { useState, type ReactNode } from "react";
 
 // Icons live here (not in the server layout) because components can't cross the server/client boundary as props.
@@ -19,6 +21,12 @@ export interface NavItem {
   icon: keyof typeof ICONS;
   group: string;
   badge?: number;
+}
+
+/** One sidebar link's shortcut, shown on hover and in its tooltip. */
+function NavHint({ href }: { href: string }) {
+  const keys = goKeys(href);
+  return keys ? <Kbd keys={keys} className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-md bg-surface-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 md:inline-flex" /> : null;
 }
 
 /**
@@ -38,6 +46,7 @@ export function NavLinks({
   initialCollapsed: boolean;
 }) {
   const path = usePathname();
+  const mac = useIsMac();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const toggle = () => {
@@ -82,13 +91,14 @@ export function NavLinks({
                           href={i.href}
                           onClick={() => setOpen(false)}
                           aria-current={active ? "page" : undefined}
-                          title={collapsed ? i.label : undefined}
+                          title={goKeys(i.href) ? `${i.label} · ${shortcutText(goKeys(i.href), mac)}` : collapsed ? i.label : undefined}
                           className={`group relative flex items-center gap-2.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-sm transition-colors pointer-coarse:py-3 ${mini("", "md:justify-center md:px-0 md:py-2")} ${
                             active ? "bg-brand/10 font-medium text-brand" : "text-ink-2 hover:bg-surface-2 hover:text-ink"
                           }`}
                         >
-                          <Icon aria-hidden size={18} weight={active ? "fill" : "regular"} className={active ? "" : "text-ink-3 transition-colors group-hover:text-ink-2"} />
-                          <span className={`flex-1 ${mini("", "md:sr-only")}`}>{i.label}</span>
+                          <Icon aria-hidden size={18} weight={active ? "fill" : "regular"} className={`shrink-0 ${active ? "" : "text-ink-3 transition-colors group-hover:text-ink-2"}`} />
+                          <span className={`min-w-0 flex-1 truncate ${mini("", "md:sr-only")}`}>{i.label}</span>
+                          {!i.badge && <NavHint href={i.href} />}
                           {i.badge ? (
                             <span className={`tnum min-w-5 rounded-full bg-brand px-1.5 text-center text-xs font-medium leading-5 text-brand-ink ${mini("", "md:absolute md:right-1 md:top-0.5 md:min-w-4 md:px-1 md:text-[10px] md:leading-4")}`}>
                               {i.badge}

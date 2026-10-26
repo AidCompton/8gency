@@ -13,8 +13,10 @@ import {
 } from "../src/lib/services/accountAuth";
 import { addContact, createAgencyWithOwner, createCompany } from "../src/lib/services/agency";
 import { ensureHubToken } from "../src/lib/services/core";
-import { chatHome, createChannel, ensureClientChannel, ensureDefaults, markRead, messages, searchMessages, sendMessage, unreadMentions } from "../src/lib/services/chat";
+import { createJob } from "../src/lib/services/jobs";
+import { chatFile, chatHome, createChannel, deleteMessage, ensureClientChannel, ensureDefaults, markRead, messages, restoreMessage, saveChatFile, searchMessages, sendMessage, sidebar, unreadMentions } from "../src/lib/services/chat";
 import { sendChatNudges } from "../src/lib/services/chatNudges";
+import { sendTimesheetReminders, sendWeeklyEmails } from "../src/lib/services/weekly";
 import { resolveHubToken } from "../src/lib/services/hub";
 
 const run = randomUUID().slice(0, 8);
@@ -309,5 +311,143 @@ describe("chat nudges, search and client groups", () => {
       assert.deepEqual(c, { name: `group-client-${run}`.slice(0, 40), category: "client", company_id: companyId, private: false });
       assert.ok(await tx.one("select 1 from chat_members where channel_id = $1 and user_id = $2", [first, A.userId]));
     });
+  });
+});
+
+describe("the weekly rhythm", () => {
+  const mailTo = (to: string) => adminQuery<{ subject: string; body: string }>("select subject, body from system_mail where to_address = $1 order by id", [to]);
+  // 2026-10-26 is a Monday and 2026-10-30 a Friday; Johannesburg is two hours ahead of UTC.
+  const mondayEarly = new Date("2026-10-26T04:30:00Z"), mondayMorning = new Date("2026-10-26T06:30:00Z"), tuesday = new Date("2026-10-27T08:00:00Z");
+  const fridayNoon = new Date("2026-10-30T10:00:00Z"), fridayLate = new Date("2026-10-30T13:30:00Z");
+
+  test("the owner gets one Monday email, from seven, with the money and the fixes; it can be switched off", async () => {
+    const to = email;
+    await adminQuery("update users set weekly_email_sent_on = null where id = $1", [A.userId]);
+    const entity = (await adminQuery<{ id: string }>("select id from entities where agency_id = $1 limit 1", [A.agencyId]))[0].id;
+    const company = await withTenant({ agencyId: A.agencyId, userId: A.userId, actorLabel: "Test" }, (tx) => createCompany(tx, { name: `Weekly Client ${run}` }));
+    await adminQuery("insert into invoices (agency_id, entity_id, company_id, number, status, issue_date, due_date, total_cents) values ($1,$2,$3,$4,'sent',current_date,current_date + 30,250000)", [A.agencyId, entity, company, `W-${run}`]);
+
+    const before = (await mailTo(to)).length;
+    await sendWeeklyEmails(mondayEarly);
+    await sendWeeklyEmails(tuesday);
+    assert.equal((await mailTo(to)).length, before, "not before seven on Monday, and not on other days");
+    await sendWeeklyEmails(mondayMorning);
+    const mail = await mailTo(to);
+    assert.equal(mail.length, before + 1);
+    assert.match(mail[mail.length - 1].body, /Billed: R\s?2\s?500/);
+    assert.match(mail[mail.length - 1].body, /turn it off on your account page/);
+    await sendWeeklyEmails(mondayMorning);
+    assert.equal((await mailTo(to)).length, before + 1, "once a week");
+
+    await adminQuery("update users set weekly_email_sent_on = null, weekly_email = false where id = $1", [A.userId]);
+    await sendWeeklyEmails(mondayMorning);
+    assert.equal((await mailTo(to)).length, before + 1, "opted out");
+    await adminQuery("update users set weekly_email = true where id = $1", [A.userId]);
+  });
+
+  test("a Friday reminder goes once, after three, to people who log time and have a gap", async () => {
+    const id = (await adminQuery<{ id: string }>("insert into users (agency_id, email, name, password_hash, role, title) values ($1,$2,'Cy Logger','x','staff','Designer') returning id", [A.agencyId, `cy-${run}@acc.example`]))[0].id;
+    const quiet = (await adminQuery<{ id: string }>("insert into users (agency_id, email, name, password_hash, role, title) values ($1,$2,'Di Quiet','x','staff','Designer') returning id", [A.agencyId, `di-${run}@acc.example`]))[0].id;
+    const job = await withTenant({ agencyId: A.agencyId, userId: A.userId, actorLabel: "Test" }, async (tx) => {
+      const company = await createCompany(tx, { name: `Timesheet Client ${run}` });
+      return createJob(tx, { company_id: company, name: "Gaps", template_key: "blank", budget_hours: 0, billing_model: "tm", owner_id: A.userId });
+    });
+    await adminQuery("insert into time_entries (agency_id, user_id, job_id, work_date, hours, category, rate_cents, cost_cents, source) values ($1,$2,$3,'2026-10-26',2,'billable',0,0,'manual')", [A.agencyId, id, job]);
+    assert.ok(quiet);
+    await sendTimesheetReminders(fridayNoon);
+    assert.equal((await mailTo(`cy-${run}@acc.example`)).length, 0, "not before three");
+    await sendTimesheetReminders(fridayLate);
+    const mail = await mailTo(`cy-${run}@acc.example`);
+    assert.equal(mail.length, 1);
+    assert.match(mail[0].body, /4 weekdays have no time logged/);
+    await sendTimesheetReminders(fridayLate);
+    assert.equal((await mailTo(`cy-${run}@acc.example`)).length, 1, "once");
+    assert.equal((await mailTo(`di-${run}@acc.example`)).length, 0, "people who don't track time aren't nagged");
+  });
+});
+
+describe("chat threads and attachments", () => {
+  const as = <T>(userId: string, name: string, fn: Parameters<typeof withTenant<T>>[1]) => withTenant({ agencyId: A.agencyId, userId, actorLabel: name }, fn);
+  const user = async (name: string) => (await adminQuery<{ id: string }>("insert into users (agency_id, email, name, password_hash, role, title) values ($1,$2,$3,'x','staff','Designer') returning id", [A.agencyId, `${name.toLowerCase()}-th-${run}@acc.example`, name]))[0].id;
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+
+  test("a reply lives in its thread, not the channel, and tells the thread's author", async () => {
+    const [ana, bo, cy] = [await user("Thana"), await user("Thbo"), await user("Thcy")];
+    const room = await as(ana, "Thana", async (tx) => {
+      await ensureDefaults(tx);
+      return createChannel(tx, { name: `threads-${run}`, category: "project", private: false, members: [bo, cy] });
+    });
+    const root = await as(ana, "Thana", async (tx) => {
+      const id = await sendMessage(tx, room, "Who can review the deck?");
+      return id;
+    });
+    await as(bo, "Thbo", async (tx) => {
+      await sendMessage(tx, room, "I can, give me an hour", "message", { parentId: root });
+      await sendMessage(tx, room, "@Thcy can you check the numbers?", "message", { parentId: root });
+      await assert.rejects(sendMessage(tx, room, "nested", "message", { parentId: (await messages(tx, room, bo, { parentId: root }))[0].id }), /gone|can't be replied/);
+      await assert.rejects(sendMessage(tx, room, "kudos @Thana", "kudos", { parentId: root }), /Kudos go in the channel/);
+
+      const top = (await messages(tx, room, bo)).filter((m) => m.kind === "message");
+      assert.deepEqual(top.map((m) => m.body), ["Who can review the deck?"], "replies stay out of the channel");
+      assert.equal(top[0].reply_count, 2);
+      assert.equal((await messages(tx, room, bo, { parentId: root })).length, 2);
+    });
+    await as(ana, "Thana", async (tx) => {
+      const n = await tx.q<{ title: string }>("select title from notifications where user_id = $1 and title like '%replied to your message%'", [ana]);
+      assert.equal(n.length, 2, "the person who started the thread hears about each reply");
+      assert.equal((await sidebar(tx, ana)).find((c) => c.id === room)!.unread, 0, "replies don't light up the channel as unread");
+    });
+    await as(cy, "Thcy", async (tx) => {
+      assert.ok((await unreadMentions(tx, cy)) >= 1, "a mention inside a thread still counts");
+      assert.equal((await sidebar(tx, cy)).find((c) => c.id === room)!.unread, 1, "only the top-level message is unread in the channel");
+    });
+  });
+
+  test("files: only allowed kinds, real pictures, shared with whoever can read the conversation", async () => {
+    const [ana, bo, outsider] = [await user("Fana"), await user("Fbo"), await user("Fout")];
+    const room = await as(ana, "Fana", (tx) => createChannel(tx, { name: `files-${run}`, category: "project", private: true, members: [bo] }));
+    const { pic, id, unsent } = await as(ana, "Fana", async (tx) => {
+      await assert.rejects(saveChatFile(tx, room, { name: "run.exe", bytes: png }), /isn't allowed/);
+      await assert.rejects(saveChatFile(tx, room, { name: "page.html", bytes: png }), /isn't allowed/);
+      await assert.rejects(saveChatFile(tx, room, { name: "fake.png", bytes: new Uint8Array([1, 2, 3, 4, 5]) }), /isn't really a picture/);
+      await assert.rejects(saveChatFile(tx, room, { name: "big.pdf", bytes: new Uint8Array(10 * 1024 * 1024 + 1) }), /10 MB/);
+
+      const pic = await saveChatFile(tx, room, { name: "../../logo.png", bytes: png });
+      const pdf = await saveChatFile(tx, room, { name: "brief.pdf", bytes: new Uint8Array([1, 2, 3]) });
+      assert.ok(!pic.name.includes("/"), "no path in the name");
+      assert.ok(pic.image && !pdf.image);
+      assert.ok(pdf.placeholder === null && pdf.width === null, "only pictures get a placeholder");
+      const sharp = (await import("sharp")).default;
+      const real = await saveChatFile(tx, room, { name: "banner.png", bytes: await sharp({ create: { width: 300, height: 120, channels: 3, background: "#7c5cff" } }).png().toBuffer() });
+      assert.deepEqual([real.width, real.height], [300, 120]);
+      assert.match(real.placeholder ?? "", /^data:image\/jpeg;base64,/);
+      assert.ok((real.placeholder ?? "").length < 2000, "the placeholder is tiny");
+      await assert.rejects(sendMessage(tx, room, "", "message", { fileIds: [randomUUID()] }), /didn't upload/);
+      const id = await sendMessage(tx, room, "", "message", { fileIds: [pic.id, pdf.id] });
+      const m = (await messages(tx, room, ana)).find((x) => x.id === id)!;
+      assert.deepEqual(m.files.map((f) => f.name).sort(), [pdf.name, pic.name].sort());
+      assert.equal(m.body, "");
+      return { pic, id, unsent: await saveChatFile(tx, room, { name: "draft.txt", bytes: new Uint8Array([65]) }) };
+    });
+    await as(bo, "Fbo", async (tx) => {
+      assert.equal((await chatFile(tx, pic.id)).mime, "image/png", "a member can open it");
+      await assert.rejects(chatFile(tx, unsent.id), /isn't there/, "an unsent upload is only for who uploaded it");
+      await assert.rejects(sendMessage(tx, room, "mine now", "message", { fileIds: [unsent.id] }), /didn't upload/, "nobody can send someone else's upload");
+    });
+    await as(outsider, "Fout", async (tx) => {
+      await assert.rejects(chatFile(tx, pic.id), /private|doesn't exist/, "not a member of a private group: no file");
+    });
+    await as(ana, "Fana", async (tx) => {
+      await deleteMessage(tx, id, false);
+      await assert.rejects(chatFile(tx, pic.id), /isn't there/, "a deleted message's files are gone from view");
+    });
+    await as(bo, "Fbo", (tx) => assert.rejects(restoreMessage(tx, id, false), /only restore your own/));
+    await as(ana, "Fana", async (tx) => {
+      await restoreMessage(tx, id, false);
+      assert.equal((await chatFile(tx, pic.id)).mime, "image/png", "Undo brings the message and its files back");
+      assert.ok((await messages(tx, room, ana)).some((m) => m.id === id && !m.deleted));
+    });
+    await adminQuery("update chat_messages set deleted_at = now() - interval '2 hours' where id = $1", [id]);
+    await as(ana, "Fana", (tx) => assert.rejects(restoreMessage(tx, id, false), /can't be restored/));
   });
 });

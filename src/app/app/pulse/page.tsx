@@ -10,6 +10,7 @@ import { draftWipSummary } from "@/lib/services/eightgent";
 import { fixAction } from "../_actions/fixes";
 import { SubmitButton } from "@/components/SubmitButton";
 import { fixList } from "@/lib/services/fixes";
+import { weekSummary } from "@/lib/services/weekly";
 import { clientHealthScores, healthScan, lastNDays, profitability, utilisationByPerson } from "@/lib/services/pulse";
 
 export const metadata = { title: "Pulse" };
@@ -43,14 +44,18 @@ export default async function PulsePage({ searchParams }: { searchParams: Promis
   const view: View = VIEWS.includes(sp.tab as View) ? (sp.tab as View) : "overview";
   const costs = can(user, "seeCostRates");
   const w = lastNDays(days, user.timezone);
-  const data = await tenant(user, async (tx) => ({
+  const data = await tenant(user, async (tx) => {
+    const fixes = view === "overview" ? await fixList(tx) : [];
+    return {
+    week: view === "overview" ? await weekSummary(tx, fixes) : null,
     scan: view === "overview" ? await healthScan(tx, 90) : null,
     prof: await profitability(tx, w),
     people: view === "people" ? await utilisationByPerson(tx, w) : [],
     health: view === "clients" ? await clientHealthScores(tx, days) : [],
     wip: view === "overview" ? await draftWipSummary(tx) : null,
-    fixes: view === "overview" ? await fixList(tx) : [],
-  }));
+    fixes,
+  };
+  });
   const { prof } = data;
   const t = prof.totals;
   const health = new Map(data.health.map((h) => [h.id, h]));
@@ -93,6 +98,23 @@ export default async function PulsePage({ searchParams }: { searchParams: Promis
           { key: "people", label: "People" },
         ]}
       />
+
+      {view === "overview" && data.week && (
+        <Card title="This week" className="mb-4" actions={<span className="text-xs text-ink-3">{formatShort(data.week.from)} – {formatShort(data.week.to)} · also emailed to owners on Monday</span>}>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div><div className="text-xs text-ink-3">Billed, last 7 days</div><div className="tnum text-xl font-semibold"><Money cents={data.week.billed} compact /></div></div>
+            <div><div className="text-xs text-ink-3">Collected, last 7 days</div><div className="tnum text-xl font-semibold"><Money cents={data.week.collected} compact /></div></div>
+            <div><div className="text-xs text-ink-3">Still leaking</div><div className={cx("tnum text-xl font-semibold", data.week.leaking > 0 && "text-warning-ink")}><Money cents={data.week.leaking} compact /></div><div className="text-xs text-ink-3">{data.week.fixCount} {data.week.fixCount === 1 ? "fix" : "fixes"} ready</div></div>
+            <div><div className="text-xs text-ink-3">Booked this week</div><div className="tnum text-xl font-semibold">{Math.round(data.week.bookedHours * 10) / 10}h</div></div>
+          </div>
+          {data.week.jobsDue.length > 0 && (
+            <p className="mt-4 border-t border-line pt-3 text-sm text-ink-2">
+              <span className="text-ink-3">Due this week: </span>
+              {data.week.jobsDue.map((j, i) => <span key={j.id}>{i > 0 && " · "}<Link href={`/app/jobs/${j.id}`} className="text-brand hover:underline">{j.label}</Link> <span className="text-ink-3">{formatShort(j.due_date)}</span></span>)}
+            </p>
+          )}
+        </Card>
+      )}
 
       {view === "overview" && data.fixes.length > 0 && (
         <Card id="tour-fixes" title="Fix it now" pad={false} className="mb-4" actions={<span className="text-xs text-ink-3">{data.fixes.length} {data.fixes.length === 1 ? "fix" : "fixes"} ready · biggest first</span>}>

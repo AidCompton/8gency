@@ -8,6 +8,25 @@ export function cx(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(" ");
 }
 
+/**
+ * Grey block for content that is still loading. Skeleton screens are built from the same
+ * Card, Stat, Table and PageHeader as the loaded page, with these blocks where text goes,
+ * so nothing shifts when the real content arrives.
+ */
+export function Skeleton({ className }: { className?: string }) {
+  return <span aria-hidden className={cx("skeleton block", className)} />;
+}
+
+/** Shows its children only if loading takes longer than ~300ms, so quick loads never flash a skeleton. */
+export function SkeletonScreen({ children, label = "Loading…" }: { children: ReactNode; label?: string }) {
+  return (
+    <div role="status" className="skeleton-delay">
+      <span className="sr-only">{label}</span>
+      {children}
+    </div>
+  );
+}
+
 export function PageHeader({ title, subtitle, actions, back }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; back?: { href: string; label: string } }) {
   return (
     <div className="mb-6">
@@ -210,7 +229,7 @@ const BTN = {
 };
 
 export function buttonClass(variant: keyof typeof BTN = "primary", size: "sm" | "md" = "md") {
-  return cx("inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg font-medium transition-[background-color,border-color,color,box-shadow,transform] duration-150 active:translate-y-px pointer-coarse:min-h-11 disabled:cursor-not-allowed disabled:opacity-50 aria-busy:cursor-wait", size === "sm" ? "px-2.5 py-1 text-sm" : "px-3.5 py-2 text-sm", BTN[variant]);
+  return cx("inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg font-medium transition-[background-color,border-color,color,box-shadow,transform] duration-150 active:translate-y-px pointer-coarse:min-h-11 disabled:cursor-not-allowed disabled:opacity-50 aria-busy:cursor-wait", size === "sm" ? "min-h-8 px-3 py-1 text-sm" : "min-h-10 px-4 py-2 text-sm", BTN[variant]);
 }
 
 export function LinkButton({ href, children, variant = "secondary", size = "md" }: { href: string; children: ReactNode; variant?: keyof typeof BTN; size?: "sm" | "md" }) {
@@ -223,10 +242,10 @@ export function LinkButton({ href, children, variant = "secondary", size = "md" 
 
 export function Field({ label, children, hint, className }: { label: string; children: ReactNode; hint?: ReactNode; className?: string }) {
   return (
-    <label className={cx("block space-y-1", className)}>
-      <span className="text-[13px] font-medium text-ink-2">{label}</span>
+    <label className={cx("block space-y-1.5", className)}>
+      <span className="block text-[13px] font-medium text-ink">{label}</span>
       {children}
-      {hint && <span className="block text-xs text-ink-3">{hint}</span>}
+      {hint && <span className="block text-xs leading-snug text-ink-3">{hint}</span>}
     </label>
   );
 }

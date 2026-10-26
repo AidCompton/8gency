@@ -8,3 +8,8 @@ uploads
 next-env.d.ts
 coverage
 backups
+
+# Private business documents (pricing, pilot terms, owner checklists): never commit to the public repo
+owner-pack/
+docs/launch-plan.md
+docs/pilot-pack.md

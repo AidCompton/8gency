@@ -47,7 +47,7 @@ function ChannelRow({ c, last, strong }: { c: ChatChannel; last: HomeMessage | n
           </span>
           {last && <span className="mt-0.5 block truncate text-sm text-ink-2"><b className="font-medium text-ink">{last.author ?? "Someone"}:</b> {preview(last)}</span>}
         </span>
-        {strong && c.unread > 0 && <span className="tnum mt-0.5 min-w-5 rounded-full bg-brand px-1.5 text-center text-[11px] font-semibold leading-5 text-brand-ink">{c.unread}<span className="sr-only"> unread</span></span>}
+        {strong && c.unread > 0 && <span className="tnum mt-0.5 min-w-5 rounded-full bg-brand px-1.5 text-center text-xs font-semibold leading-5 text-brand-ink">{c.unread}<span className="sr-only"> unread</span></span>}
       </Link>
     </li>
   );

@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { idempotent } from "@/lib/idempotency";
 import { processInbound } from "@/lib/services/inbound";
 
 /**
@@ -18,7 +19,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ channel
   const body = (await req.json().catch(() => null)) as { from?: string; text?: string } | null;
   if (!body?.from || !body?.text) return Response.json({ error: "from and text are required" }, { status: 400 });
   try {
-    return Response.json(await processInbound({ channel, from: body.from, text: body.text }));
+    // Callers should send an Idempotency-Key header and reuse it on every retry: the message is then recorded once.
+    const r = await idempotent(req.headers.get("idempotency-key"), `inbound:${channel}`, () => processInbound({ channel, from: body.from!, text: body.text! }));
+    if (r.status === "busy") return Response.json({ error: "the first attempt with this Idempotency-Key is still running" }, { status: 409 });
+    return Response.json(r.value, { headers: r.status === "replayed" ? { "idempotent-replayed": "true" } : undefined });
   } catch (e) {
     return Response.json({ status: "ignored", detail: (e as Error).message }, { status: 200 });
   }

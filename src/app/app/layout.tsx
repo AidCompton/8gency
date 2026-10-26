@@ -1,4 +1,7 @@
 import { cookies } from "next/headers";
+import { CommandMenu, type CommandItem } from "@/components/CommandMenu";
+import { ThemeButton } from "@/components/ThemeToggle";
+import { Toaster } from "@/components/Toaster";
 import { Tour } from "@/components/Tour";
 import { clearSampleAction } from "./_actions/sample";
 import { modulesOf } from "@/lib/domain/modules";
@@ -59,13 +62,24 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .filter((n) => n.show)
     .map(({ show: _show, ...n }) => n);
 
+  const commands: CommandItem[] = [
+    ...nav.map((n) => ({ id: n.href, label: n.label, href: n.href, group: "Go to" as const })),
+    { id: "inbox", label: "Inbox", href: "/app/notifications", group: "Go to", keywords: "notifications" },
+    { id: "account", label: "Your account", href: "/app/account", group: "Go to", keywords: "profile notifications appearance security" },
+    { id: "connectors", label: "Connectors", href: "/app/connectors", group: "Go to", keywords: "integrations gmail xero toggl trello" },
+    ...(can(user, "seeAllJobs") ? [{ id: "new-job", label: "New job", href: "/app/jobs/new", group: "Actions" as const, keywords: "create add" }, { id: "new-client", label: "New client", href: "/app/clients/new", group: "Actions" as const, keywords: "create add" }] : []),
+    ...(can(user, "seeBudgetBurn") ? [{ id: "new-retainer", label: "New retainer", href: "/app/retainers/new", group: "Actions" as const, keywords: "create add" }] : []),
+    { id: "log-time", label: "Log time", href: "/app/time", group: "Actions", keywords: "timesheet hours" },
+    ...(mods.chat ? [{ id: "new-chat", label: "New chat message or group", href: "/app/chat/new", group: "Actions" as const, keywords: "dm direct channel" }] : []),
+    ...(sampleJob ? [{ id: "tour", label: "Take the tour", href: "/app?tour=1", group: "Actions" as const, keywords: "sample walkthrough" }] : []),
+  ];
   return (
     <div
       id="app-shell"
       data-nav={navCollapsed ? "collapsed" : "open"}
       className="min-h-screen md:grid md:grid-cols-[240px_minmax(0,1fr)] md:transition-[grid-template-columns] md:duration-200 md:data-[nav=collapsed]:grid-cols-[64px_minmax(0,1fr)] print:block"
     >
-      <aside className="no-print border-b border-line bg-surface md:sticky md:top-0 md:flex md:h-screen md:flex-col md:border-b-0 md:border-r">
+      <aside style={{ viewTransitionName: "app-nav" }} className="no-print border-b border-line bg-surface md:sticky md:top-0 md:flex md:h-screen md:flex-col md:border-b-0 md:border-r">
         <NavLinks
           items={nav}
           initialCollapsed={navCollapsed}
@@ -120,7 +134,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         />
       </aside>
       <div className="min-w-0">
-        <header className="no-print sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-line bg-bg/85 px-4 backdrop-blur-md sm:px-6 md:h-16">
+        <header style={{ viewTransitionName: "app-header" }} className="app-header no-print sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-line bg-bg/85 px-4 backdrop-blur-md sm:px-6">
           <div className="hidden text-sm text-ink-3 sm:block">{new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long", timeZone: user.timezone })}</div>
           <div className="ml-auto flex items-center gap-2">
             {timer && (
@@ -136,6 +150,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 <SubmitButton className="min-h-7 rounded-full bg-ink px-3 text-xs font-medium text-bg transition-opacity hover:opacity-85 pointer-coarse:min-h-11">Stop</SubmitButton>
               </form>
             )}
+            <CommandMenu items={commands} />
+            <ThemeButton />
             <Link
               href="/app/connectors"
               aria-label="Connectors"
@@ -159,7 +175,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </Link>
           </div>
         </header>
-        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8 print:max-w-none print:p-0">
+        <main className="app-main mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8 print:max-w-none print:p-0">
           <Suspense>
             <Flash />
           </Suspense>
@@ -176,6 +192,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           )}
           {children}
         </main>
+        <Toaster />
         {sampleJob && <Suspense><Tour jobId={sampleJob.id} /></Suspense>}
       </div>
     </div>

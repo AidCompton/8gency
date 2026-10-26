@@ -87,7 +87,7 @@ export default async function BookingsPage({ searchParams }: { searchParams: Pro
               {TEAMS.filter((t) => data.people.some((p) => p.team === t.key)).map((t) => (
                 <tbody key={t.key} className="divide-y divide-line border-b border-line">
                   <tr className="bg-surface-2/30">
-                    <th colSpan={6} className="px-4 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-ink-3">{t.label}</th>
+                    <th colSpan={6} className="px-4 py-1.5 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">{t.label}</th>
                   </tr>
                   {data.people.filter((p) => p.team === t.key).map((p) => (
                     <tr key={p.id} className="align-top">

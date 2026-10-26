@@ -3,8 +3,9 @@ import { act, bool, str } from "@/lib/actions";
 import { assertModule, requireUser, tenant } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import {
-  addMembers, createChannel, deleteMessage, editMessage, joinChannel, leaveChannel, openDirect, sendMessage, toggleReaction, updateChannel,
+  addMembers, createChannel, deleteMessage, editMessage, joinChannel, leaveChannel, openDirect, restoreMessage, sendMessage, toggleReaction, updateChannel,
 } from "@/lib/services/chat";
+import { idempotent } from "@/lib/idempotency";
 import { UserError } from "@/lib/services/core";
 
 /** For calls from the chat screen: a readable error instead of a redirect. */
@@ -20,8 +21,10 @@ async function attempt(fn: (user: Awaited<ReturnType<typeof requireUser>>) => Pr
   }
 }
 
-export async function sendChatAction(channelId: string, body: string, kudos: boolean) {
-  return attempt((user) => tenant(user, (tx) => sendMessage(tx, channelId, body, kudos ? "kudos" : "message")));
+/** `key` identifies one attempt at sending this message: pressing send again with the same key never posts it twice. */
+export async function sendChatAction(channelId: string, body: string, kudos: boolean, extra: { parentId?: string; fileIds?: string[]; key?: string } = {}) {
+  const { key, ...rest } = extra;
+  return attempt((user) => idempotent(key, `chat:${user.id}`, () => tenant(user, (tx) => sendMessage(tx, channelId, body, kudos ? "kudos" : "message", rest))));
 }
 export async function reactChatAction(messageId: string, emoji: string) {
   return attempt((user) => tenant(user, (tx) => toggleReaction(tx, messageId, emoji)));
@@ -31,6 +34,10 @@ export async function editChatAction(messageId: string, body: string) {
 }
 export async function deleteChatAction(messageId: string) {
   return attempt((user) => tenant(user, (tx) => deleteMessage(tx, messageId, can(user, "settings"))));
+}
+
+export async function restoreChatAction(messageId: string) {
+  return attempt((user) => tenant(user, (tx) => restoreMessage(tx, messageId, can(user, "settings"))));
 }
 
 const ids = (fd: FormData, k: string) => fd.getAll(k).map(String).filter(Boolean);
