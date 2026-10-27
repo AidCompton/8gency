@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CaretRight, CheckCircle } from "@phosphor-icons/react/ssr";
+import { CopyField } from "@/components/CopyField";
 import { Dialog } from "@/components/Dialog";
 import { LogoCard } from "@/components/LogoCard";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -11,6 +12,7 @@ import { TEAMS } from "@/lib/domain/bookings";
 import { MODULES, modulesOf } from "@/lib/domain/modules";
 import { can, ROLE_LABELS } from "@/lib/permissions";
 import { pendingInvites } from "@/lib/services/accountAuth";
+import { QUALIFY_AFTER_DAYS, referralSummary } from "@/lib/services/referrals";
 
 export const metadata = { title: "Settings" };
 
@@ -27,6 +29,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     users: await tx.q<{ id: string; name: string; email: string; role: string; title: string; weekly_hours: number; cost_rate_cents: number; target_utilisation: number; active: boolean; team: string | null }>("select id, name, email, role, title, team, weekly_hours, cost_rate_cents, target_utilisation, active from users order by active desc, name"),
     companies: await tx.q<{ id: string; name: string }>("select id, name from companies where kind = 'client' order by name"),
   }));
+  const referrals = tab === "referrals" ? await referralSummary(user.agency_id) : null;
   const invites = tab === "team" ? await pendingInvites(user.agency_id) : [];
   const roleTitles = [...new Set(data.rates.map((r) => r.role_title))];
   return (
@@ -44,7 +47,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           </ol>
         </Card>
       )}
-      <Tabs base="/app/settings" active={tab} tabs={[{ key: "agency", label: "Agency" }, { key: "entity", label: "Billing entity & tax" }, { key: "rates", label: "Rate card" }, { key: "team", label: "Team" }, { key: "modules", label: "Modules" }, { key: "import", label: "Import" }, { key: "data", label: "Data & security" }]} />
+      <Tabs base="/app/settings" active={tab} tabs={[{ key: "agency", label: "Agency" }, { key: "entity", label: "Billing entity & tax" }, { key: "rates", label: "Rate card" }, { key: "team", label: "Team" }, { key: "modules", label: "Modules" }, { key: "import", label: "Import" }, { key: "referrals", label: "Referrals" }, { key: "data", label: "Data & security" }]} />
 
       {tab === "agency" && (
         <div className="grid max-w-5xl items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -184,6 +187,35 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             </form>
             <p className="mt-2 text-xs text-ink-3">They get an email with a link to set their own password. Removing access ends sessions and timers the same day (Rule 14).</p>
           </Card>
+        </div>
+      )}
+
+      {tab === "referrals" && referrals && (
+        <div className="max-w-3xl space-y-4">
+          <Card title="Share 8gency, earn free months">
+            <p className="text-sm text-ink-2">Send this link to another agency. When they join and are still using 8gency {QUALIFY_AFTER_DAYS} days later, you get a free month, up to six a year. It is taken off a future bill.</p>
+            <div className="mt-4"><CopyField value={referrals.link} label="Your referral link" /></div>
+            <dl className="mt-5 grid grid-cols-3 gap-4 border-t border-line pt-4 text-sm">
+              <div><dt className="text-ink-3">Waiting to join</dt><dd className="tnum text-2xl font-semibold">{referrals.rows.filter((r) => r.status === "waiting").length}</dd></div>
+              <div><dt className="text-ink-3">Signed up</dt><dd className="tnum text-2xl font-semibold">{referrals.rows.filter((r) => r.status === "signed_up").length}</dd></div>
+              <div><dt className="text-ink-3">Free months earned</dt><dd className="tnum text-2xl font-semibold">{referrals.earned}</dd></div>
+            </dl>
+          </Card>
+          {referrals.rows.length > 0 && (
+            <Card title="Agencies you brought" pad={false}>
+              <ul className="divide-y divide-line">
+                {referrals.rows.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
+                    <span className="font-medium">{r.referred_agency_name}</span>
+                    <span className="flex items-center gap-3 text-ink-3">
+                      {r.status === "signed_up" && r.signed_up_at && <span>Free month on {formatDate(new Date(r.signed_up_at.getTime() + QUALIFY_AFTER_DAYS * 86400_000).toISOString().slice(0, 10))}</span>}
+                      <Badge tone={r.status === "qualified" ? "good" : r.status === "signed_up" ? "info" : "neutral"}>{r.status === "qualified" ? "Free month earned" : r.status === "signed_up" ? "Signed up" : r.status === "void" ? "Over the yearly limit" : "On the waitlist"}</Badge>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
         </div>
       )}
 

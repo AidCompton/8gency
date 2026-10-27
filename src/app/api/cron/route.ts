@@ -4,6 +4,7 @@ import { runConnectors } from "@/lib/connectors/sync";
 import { runAutomations } from "@/lib/services/automations";
 import { purgeUnsentChatFiles } from "@/lib/services/chat";
 import { sendChatNudges } from "@/lib/services/chatNudges";
+import { qualifyReferrals } from "@/lib/services/referrals";
 import { purgeIdempotencyKeys } from "@/lib/idempotency";
 import { sendTimesheetReminders, sendWeeklyEmails } from "@/lib/services/weekly";
 
@@ -17,6 +18,7 @@ export async function POST(req: Request) {
   await sendChatNudges().catch((e) => console.error("chat nudges failed", e));
   await purgeUnsentChatFiles().catch((e) => console.error("chat file purge failed", e));
   await purgeIdempotencyKeys().catch((e) => console.error("idempotency purge failed", e));
+  await qualifyReferrals().catch((e) => console.error("referrals failed", e));
   await sendWeeklyEmails().catch((e) => console.error("weekly emails failed", e));
   await sendTimesheetReminders().catch((e) => console.error("timesheet reminders failed", e));
   const agencies = await adminQuery<{ id: string }>("select id from agencies");

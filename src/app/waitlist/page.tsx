@@ -23,8 +23,9 @@ function Pick({ label, name, options }: { label: string; name: string; options: 
   );
 }
 
-export default async function WaitlistPage({ searchParams }: { searchParams: Promise<{ joined?: string }> }) {
-  const joined = (await searchParams).joined;
+export default async function WaitlistPage({ searchParams }: { searchParams: Promise<{ joined?: string; ref?: string }> }) {
+  const sp = await searchParams;
+  const joined = sp.joined;
   const footer = <>Already invited? <Link className="text-brand hover:underline" href="/login">Log in</Link></>;
   if (joined) {
     return (
@@ -36,6 +37,7 @@ export default async function WaitlistPage({ searchParams }: { searchParams: Pro
   return (
     <AuthShell title="Join the waitlist" subtitle="See where your agency is winning, where it's losing, and patch the holes before they sink you." footer={footer}>
       <form action={joinWaitlistAction} className="space-y-4">
+        {sp.ref && <input type="hidden" name="ref" value={sp.ref.slice(0, 16)} />}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Your name"><input name="name" required autoComplete="name" /></Field>
           <Field label="Agency name"><input name="agencyName" required autoComplete="organization" /></Field>
@@ -56,7 +58,7 @@ export default async function WaitlistPage({ searchParams }: { searchParams: Pro
         {/* Real people never see or fill this in; bots do. */}
         <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden"><label>Website<input name="website" tabIndex={-1} autoComplete="off" /></label></div>
         <SubmitButton className={buttonClass("primary") + " w-full"}>Join the waitlist</SubmitButton>
-        <p className="text-xs text-ink-3">We use your details only to invite you and to decide what to build. See our privacy policy once it's published. We never share them.</p>
+        <p className="text-xs text-ink-3">We use your details only to invite you and to decide what to build. Read our <Link className="text-brand hover:underline" href="/privacy">privacy policy</Link>. We never share them.</p>
       </form>
     </AuthShell>
   );

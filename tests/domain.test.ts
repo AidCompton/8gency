@@ -233,3 +233,15 @@ Kind regards, Sam`;
   assert.equal(itemsFromModelText('Here you go:\n```json\n{"items":[{"name":"Website","unit":"deliverable","quantity":1,"rounds_allowed":3,"inclusions":"","exclusions":"Hosting"},{"name":""}]}\n```')?.length, 1);
   assert.equal(itemsFromModelText("I can't do that."), null);
 });
+
+test("leak calculator: adds the three leaks, clamps nonsense and recovers a third", async () => {
+  const { estimateLeak } = await import("../src/lib/domain/leak");
+  const r = estimateLeak({ people: 5, rate: 600, hoursPerWeek: 30, unbilledPct: 10, creepHoursPerWeek: 4, retainerOverHoursPerMonth: 10 });
+  assert.equal(r.unbilled, 5 * 30 * 0.1 * 600 * 46);
+  assert.equal(r.creep, 4 * 600 * 46);
+  assert.equal(r.retainers, 10 * 600 * 12);
+  assert.equal(r.total, r.unbilled + r.creep + r.retainers);
+  assert.equal(r.recoverable, Math.round(r.total / 3));
+  const weird = estimateLeak({ people: -3, rate: Number.NaN, hoursPerWeek: 1e9, unbilledPct: 500, creepHoursPerWeek: -1, retainerOverHoursPerMonth: 0 });
+  assert.equal(weird.total, 0, "no people or no rate means nothing to estimate");
+});

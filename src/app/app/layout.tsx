@@ -17,6 +17,7 @@ import { NavLinks, type NavItem } from "@/components/NavLinks";
 import { buttonClass } from "@/components/ui";
 import { TimerClock } from "@/components/Timer";
 import { requireUser, tenant } from "@/lib/auth";
+import { recordActive } from "@/lib/usage";
 import { can, ROLE_LABELS } from "@/lib/permissions";
 import { currentTimer } from "@/lib/services/time";
 
@@ -30,6 +31,7 @@ const ProfileIcon = () => (
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
   const mods = modulesOf(user.modules);
+  void recordActive(user.agency_id, user.id);
   const navCollapsed = (await cookies()).get("8g_nav")?.value === "collapsed";
   const { timer, unread, triage, chatUnread, sampleJob } = await tenant(user, async (tx) => ({
     sampleJob: await tx.one<{ id: string | null }>("select (select j.id from jobs j join companies c on c.id = j.company_id where c.is_sample order by j.created_at limit 1) as id where exists (select 1 from companies where is_sample)"),

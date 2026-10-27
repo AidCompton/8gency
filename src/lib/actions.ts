@@ -2,7 +2,9 @@ import "server-only";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { getSessionUser } from "./auth";
 import { idempotent } from "./idempotency";
+import { recordUse } from "./usage";
 import { ForbiddenError } from "./permissions";
 import { UserError } from "./services/core";
 
@@ -45,6 +47,8 @@ export async function act(back: string, fn: () => Promise<string | void>, ok?: s
     if (pg.code === "23505") redirect(withParam(back, "error", "That already exists."));
     throw e;
   }
+  const user = await getSessionUser().catch(() => null);
+  if (user) await recordUse(user.agency_id, back);
   revalidatePath("/app", "layout");
   redirect(ok ? withParam(target, "ok", ok) : target);
 }

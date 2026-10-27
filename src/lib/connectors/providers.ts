@@ -63,7 +63,8 @@ const google = (scopes: string[]): OAuthDef => ({ ...GOOGLE, scopes: ["openid", 
 export const PROVIDERS: ProviderDef[] = [
   { key: "gmail", name: "Gmail", catalog: "gmail", personal: false, auth: google(["gmail.send"]), note: "Client emails from the Outbox and automations are sent from this mailbox." },
   { key: "google_calendar", name: "Google Calendar", catalog: "google_calendar", personal: true, auth: google(["calendar.events"]), note: "Your client meetings (including Google Meet calls) become timesheet suggestions. Only you see them." },
-  { key: "google_drive", name: "Google Drive", catalog: "google_drive", personal: false, auth: google(["drive"]), note: "Add proof versions from a Drive link, and file approved finals in each client's folder." },
+  // Held back from launch (see the catalogue entry): set GOOGLE_DRIVE_ENABLED=1 to switch it on for testing.
+  { key: "google_drive", name: "Google Drive", catalog: "google_drive", personal: false, auth: google(["drive"]), env: ["GOOGLE_DRIVE_ENABLED"], note: "Add proof versions from a Drive link, and file approved finals in each client's folder." },
   { key: "ga4", name: "Google Analytics 4", catalog: "ga4", personal: false, auth: google(["analytics.readonly"]), note: "Weekly results per client in status reports." },
   { key: "google_ads", name: "Google Ads", catalog: "google_ads", personal: false, auth: google(["adwords"]), env: ["GOOGLE_ADS_DEVELOPER_TOKEN"], note: "Daily spend becomes re-billable costs on the mapped job." },
   {

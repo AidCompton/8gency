@@ -23,7 +23,7 @@ export function AuthShell({ title, subtitle, children, footer }: { title: string
             ))}
           </ul>
         </div>
-        <p className="relative text-xs text-ink-3">Made for agencies of 5 to 50 people.</p>
+        <p className="relative text-xs text-ink-3">Made for marketing agencies of 3 people and up.</p>
       </section>
       <section className="flex items-center justify-center px-4 py-10 sm:px-8">
         <div className="w-full max-w-sm">

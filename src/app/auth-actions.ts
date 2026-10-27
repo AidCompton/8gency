@@ -82,6 +82,7 @@ export async function joinWaitlistAction(fd: FormData) {
         teamSize: Number(str(fd, "teamSize")) || null,
         tools: { time: str(fd, "time"), projects: str(fd, "projects"), accounting: str(fd, "accounting"), email: str(fd, "mail") },
         note: str(fd, "note"),
+        referralCode: str(fd, "ref"),
       },
       clientIp(await headers()),
     );

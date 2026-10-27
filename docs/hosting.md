@@ -10,7 +10,7 @@ What's built, what needs your decisions, and the "if it breaks" runbook (draft).
 4. **Where the app runs.** The `Dockerfile` builds one image. Run it on a managed container service (AWS App Runner/ECS, Azure Container Apps) behind HTTPS, with at least two instances so a restart doesn't mean downtime. Not tested: Docker isn't installed on this machine.
 5. **Secrets vault** (AWS Secrets Manager or Azure Key Vault) for `CONNECTOR_SECRET_KEY`, the database URLs and the mail key, injected as environment variables at start. Never in the image or the repo.
 6. **Account email** provider: Resend is wired in (`RESEND_API_KEY`, `SYSTEM_MAIL_FROM`). Verify the sending domain (SPF, DKIM) first.
-7. **A scheduler** calling `POST /api/cron` with the `x-8gency-secret` header every 5 to 15 minutes (EventBridge Scheduler, Azure Logic Apps, or any cron).
+7. **A scheduler** calling `POST /api/cron` with the `x-8gency-secret` header every 5 to 15 minutes (EventBridge Scheduler, Azure Logic Apps, or any cron). Each call also runs: chat email nudges, the weekly owner email and Friday reminders (each sends once), referral qualification, and clean-up of unsent uploads and old idempotency keys.
 8. **Status page**: a free hosted one (Better Stack, Instatus) watching `GET /api/health`.
 9. **A reverse proxy or load balancer that sets `X-Forwarded-For`.** Login throttling uses it for the IP limit. If the app is reachable directly, a client can fake it.
 
@@ -23,6 +23,8 @@ What's built, what needs your decisions, and the "if it breaks" runbook (draft).
 | `INBOUND_WEBHOOK_SECRET` | Long random value; protects `/api/cron` and `/api/inbound/*`. Not `change-me`. |
 | `CONNECTOR_SECRET_KEY` | 32 random bytes, base64. Losing it makes saved connections unreadable: back it up in the vault. |
 | `RESEND_API_KEY`, `SYSTEM_MAIL_FROM` | Account email. |
+| `SITE_DOMAIN`, `SITE_URL`, `SITE_LEGAL_NAME`, `SITE_REGISTRATION`, `SITE_ADDRESS`, `SITE_INFO_OFFICER` | Shown on the public privacy policy, terms and footer. Set them once the company exists. |
+| `GOOGLE_DRIVE_ENABLED` | Leave unset at launch: Drive is held back (restricted Google scope). |
 | `UPLOAD_DIR` | Until object storage is wired in, must be a persistent disk. |
 | Connector client IDs and secrets | See `.env.example`. Only needed for connectors you switch on. |
 

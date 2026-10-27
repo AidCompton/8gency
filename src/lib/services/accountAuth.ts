@@ -6,6 +6,7 @@ import { sendSystemMail } from "../systemMail";
 import { AGENCY_TYPES, type AgencyType } from "../templates";
 import { addTeamMember, createAgencyWithOwner } from "./agency";
 import { appUrl, UserError } from "./core";
+import { noteWaitlistReferral } from "./referrals";
 import type { Role } from "../permissions";
 
 // Everything about getting into an account: reset, change, invites and the
@@ -203,6 +204,7 @@ export async function signupWithInvite(token: string, input: { agencyName: strin
   return withAdminTx(async (c) => {
     const made = await createAgencyWithOwner(c, { agencyName: input.agencyName.trim(), agencyType: input.agencyType as AgencyType, ownerName: input.ownerName.trim(), email: t.email, passwordHash });
     await c.query("update users set email_verified_at = now(), password_changed_at = now() where id = $1", [made.userId]);
+    await c.query("update referrals set status = 'signed_up', referred_agency_id = $2, signed_up_at = now() where lower(referred_email) = lower($1) and status = 'waiting'", [t.email, made.agencyId]);
     return made;
   });
 }
@@ -216,6 +218,8 @@ export interface WaitlistInput {
   teamSize: number | null;
   tools: { time: string; projects: string; accounting: string; email: string };
   note: string;
+  /** The referral code from the link they followed, if any. */
+  referralCode?: string;
 }
 
 export async function joinWaitlist(i: WaitlistInput, ip: string) {
@@ -231,6 +235,7 @@ export async function joinWaitlist(i: WaitlistInput, ip: string) {
      on conflict (lower(email)) do update set name = excluded.name, agency_name = excluded.agency_name, team_size = excluded.team_size, tools = excluded.tools, note = excluded.note`,
     [email, clean(i.name), clean(i.agencyName), i.teamSize && i.teamSize > 0 && i.teamSize < 10000 ? Math.round(i.teamSize) : null, JSON.stringify(Object.fromEntries(Object.entries(i.tools).map(([k, v]) => [k, clean(v)]))), i.note.trim().slice(0, 500)],
   );
+  await noteWaitlistReferral(email, clean(i.agencyName), i.referralCode).catch(() => {});
 }
 
 /** Which tools the waitlist uses, most common first: the roadmap for integrations. */
