@@ -1,0 +1,104 @@
+import "server-only";
+import { randomBytes } from "node:crypto";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { cache } from "react";
+import { adminQuery, withTenant, type Tx } from "./db";
+import { modulesOf, type ModuleKey } from "./domain/modules";
+import { hashToken } from "./passwords";
+import { UserError } from "./services/core";
+import { can, type Capability, type Role } from "./permissions";
+
+const COOKIE = "8g_session";
+const SESSION_DAYS = 30;
+
+export interface SessionUser {
+  id: string;
+  agency_id: string;
+  email: string;
+  name: string;
+  role: Role;
+  title: string;
+  agency_name: string;
+  agency_color: string;
+  /** Cache key for /api/logo; null when the agency has no logo. */
+  agency_logo_v: string | null;
+  timezone: string;
+  base_currency: string;
+  /** Raw per-agency module switches; read with modulesOf(). */
+  modules: unknown;
+}
+
+export { hashPassword, hashToken, verifyPassword } from "./passwords";
+
+export async function createSession(userId: string, agencyId: string) {
+  const token = randomBytes(32).toString("base64url");
+  const expires = new Date(Date.now() + SESSION_DAYS * 86_400_000);
+  await adminQuery("insert into sessions (token_hash, user_id, agency_id, expires_at) values ($1,$2,$3,$4)", [
+    hashToken(token),
+    userId,
+    agencyId,
+    expires,
+  ]);
+  (await cookies()).set(COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    expires,
+  });
+}
+
+/** Hash of this browser's session, so "sign out other devices" can keep it. */
+export async function currentSessionHash() {
+  const token = (await cookies()).get(COOKIE)?.value;
+  return token ? hashToken(token) : null;
+}
+
+export async function destroySession() {
+  const jar = await cookies();
+  const token = jar.get(COOKIE)?.value;
+  if (token) await adminQuery("delete from sessions where token_hash = $1", [hashToken(token)]);
+  jar.delete(COOKIE);
+}
+
+export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
+  const token = (await cookies()).get(COOKIE)?.value;
+  if (!token) return null;
+  const rows = await adminQuery<SessionUser>(
+    `select u.id, u.agency_id, u.email, u.name, u.role, u.title,
+            a.name as agency_name, a.brand_color as agency_color, case when a.logo is not null then floor(extract(epoch from a.logo_updated_at))::bigint::text end as agency_logo_v, a.timezone, a.base_currency, a.modules
+       from sessions s
+       join users u on u.id = s.user_id and u.active
+       join agencies a on a.id = s.agency_id
+      where s.token_hash = $1 and s.expires_at > now()`,
+    [hashToken(token)],
+  );
+  return rows[0] ?? null;
+});
+
+export async function requireUser(): Promise<SessionUser> {
+  const user = await getSessionUser();
+  if (!user) redirect("/login");
+  return user;
+}
+
+/** Run a tenant-scoped transaction as the signed-in user. */
+export async function tenant<T>(user: SessionUser, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return withTenant({ agencyId: user.agency_id, userId: user.id, actorLabel: user.name }, fn);
+}
+
+/** For pages: send users without a capability back to My Day with a message, rather than an error page. */
+export function requireCap(user: SessionUser, cap: Capability) {
+  if (!can(user, cap)) redirect(`/app/my-day?error=${encodeURIComponent("You don't have access to that page. Ask an owner or operations lead if you need it.")}`);
+}
+
+/** For pages: send people away (to My Day, with a message) when the agency has switched a module off. */
+export function requireModule(user: SessionUser, key: ModuleKey) {
+  if (!modulesOf(user.modules)[key]) redirect(`/app/my-day?error=${encodeURIComponent("That part of 8gency is switched off for your agency. An owner can turn it on in Settings.")}`);
+}
+
+/** For actions and API routes: the same check, as an error the caller can show. */
+export function assertModule(user: SessionUser, key: ModuleKey) {
+  if (!modulesOf(user.modules)[key]) throw new UserError("That part of 8gency is switched off for your agency.");
+}

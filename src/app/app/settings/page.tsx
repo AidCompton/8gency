@@ -1,0 +1,307 @@
+import Link from "next/link";
+import { CaretRight, CheckCircle } from "@phosphor-icons/react/ssr";
+import { CopyField } from "@/components/CopyField";
+import { Dialog } from "@/components/Dialog";
+import { LogoCard } from "@/components/LogoCard";
+import { SubmitButton } from "@/components/SubmitButton";
+import { addRateAction, addUserAction, deactivateUserAction, revokeInviteAction, updateModulesAction, importAction, updateAgencyAction, updateEntityAction, updateUserAction } from "../_actions/settings";
+import { Avatar, Badge, Card, Field, Money, PageHeader, Table, Tabs, Td, buttonClass } from "@/components/ui";
+import { requireCap, requireUser, tenant } from "@/lib/auth";
+import { formatDate } from "@/lib/domain/dates";
+import { TEAMS } from "@/lib/domain/bookings";
+import { MODULES, modulesOf } from "@/lib/domain/modules";
+import { can, ROLE_LABELS } from "@/lib/permissions";
+import { pendingInvites } from "@/lib/services/accountAuth";
+import { QUALIFY_AFTER_DAYS, referralSummary } from "@/lib/services/referrals";
+
+export const metadata = { title: "Settings" };
+
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string; welcome?: string }> }) {
+  const sp = await searchParams;
+  const tab = sp.tab ?? "agency";
+  const user = await requireUser();
+  requireCap(user, "settings");
+  const costs = can(user, "seeCostRates");
+  const data = await tenant(user, async (tx) => ({
+    agency: (await tx.one<{ name: string; brand_color: string; job_number_format: string; brief_threshold: number; bill_within_days: number; timezone: string; ai_enabled: boolean; agency_type: string; modules: unknown }>("select * from agencies where id = $1", [tx.agencyId]))!,
+    entity: (await tx.one<{ id: string; name: string; legal_name: string; currency: string; tax_label: string; tax_rate: number; tax_number: string; registration_number: string; address: string; bank_details: string; invoice_prefix: string; next_invoice_seq: number }>("select * from entities where is_default order by created_at limit 1"))!,
+    rates: await tx.q<{ id: string; role_title: string; rate_cents: number; effective_from: string; company: string | null }>("select r.id, r.role_title, r.rate_cents, r.effective_from, c.name as company from rate_cards r left join companies c on c.id = r.company_id order by r.role_title, c.name nulls first, r.effective_from desc"),
+    users: await tx.q<{ id: string; name: string; email: string; role: string; title: string; weekly_hours: number; cost_rate_cents: number; target_utilisation: number; active: boolean; team: string | null }>("select id, name, email, role, title, team, weekly_hours, cost_rate_cents, target_utilisation, active from users order by active desc, name"),
+    companies: await tx.q<{ id: string; name: string }>("select id, name from companies where kind = 'client' order by name"),
+  }));
+  const referrals = tab === "referrals" ? await referralSummary(user.agency_id) : null;
+  const invites = tab === "team" ? await pendingInvites(user.agency_id) : [];
+  const roleTitles = [...new Set(data.rates.map((r) => r.role_title))];
+  return (
+    <>
+      <PageHeader title="Settings" subtitle="Defaults first: everything here ships with sensible values from your agency-type template." />
+      {sp.welcome && (
+        <Card className="mb-5 border-brand/40 bg-brand/5">
+          <h2 className="font-semibold">Welcome to 8gency. Let's get you live today.</h2>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-ink-2">
+            <li>Want to look around first? <Link href="/app" className="font-medium text-brand hover:underline">Explore a sample agency</Link> from Home.</li>
+            <li>Connect <Link href="/app/connectors/toggl" className="font-medium text-brand hover:underline">Toggl</Link> and <Link href="/app/connectors/trello" className="font-medium text-brand hover:underline">Trello</Link> to pull your projects and time in, or import clients and time from a spreadsheet (below).</li>
+            <li>Add your team and their roles (Team tab) so time maps to the right people and rates.</li>
+            <li>Open <b>Home</b> to see your Agency Health Scan.</li>
+            <li>Add approvers on each client and send their first hub links.</li>
+          </ol>
+        </Card>
+      )}
+      <Tabs base="/app/settings" active={tab} tabs={[{ key: "agency", label: "Agency" }, { key: "entity", label: "Billing entity & tax" }, { key: "rates", label: "Rate card" }, { key: "team", label: "Team" }, { key: "modules", label: "Modules" }, { key: "import", label: "Import" }, { key: "referrals", label: "Referrals" }, { key: "data", label: "Data & security" }]} />
+
+      {tab === "agency" && (
+        <div className="grid max-w-5xl items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <Card title="Agency">
+          <form action={updateAgencyAction} className="grid gap-4 sm:grid-cols-2">
+            <Field label="Agency name" className="sm:col-span-2"><input name="name" defaultValue={data.agency.name} /></Field>
+            <Field label="Brand colour" hint="Accents on the client hub and invoices."><input type="color" name="brand_color" defaultValue={data.agency.brand_color} className="!p-1" /></Field>
+            <Field label="Time zone"><input name="timezone" defaultValue={data.agency.timezone} /></Field>
+            <Field label="Job number format" hint="{CLIENT}, {YYYY}, {YY}, {SEQ}"><input name="job_number_format" defaultValue={data.agency.job_number_format} /></Field>
+            <Field label="Minimum brief score to start work"><input name="brief_threshold" defaultValue={data.agency.brief_threshold} /></Field>
+            <Field label="Invoice within (days)" hint="Ready-to-bill items older than this are flagged."><input name="bill_within_days" defaultValue={data.agency.bill_within_days} /></Field>
+            <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" name="ai_enabled" defaultChecked={data.agency.ai_enabled} /> 8gent AI drafting on. Claude (Anthropic) reads text you give it, such as a quote to draft a scope, to write drafts. It's never used for training, and a person always reviews the result.</label>
+            <div><SubmitButton className={buttonClass("primary", "sm")}>Save</SubmitButton></div>
+          </form>
+        </Card>
+        <LogoCard logoV={user.agency_logo_v} agencyName={user.agency_name} back="/app/settings?tab=agency" />
+        </div>
+      )}
+
+      {tab === "entity" && (
+        <Card className="max-w-2xl">
+          <form action={updateEntityAction} className="grid gap-4 sm:grid-cols-2">
+            <input type="hidden" name="entity_id" value={data.entity.id} />
+            <Field label="Trading name"><input name="name" defaultValue={data.entity.name} /></Field>
+            <Field label="Legal name"><input name="legal_name" defaultValue={data.entity.legal_name} /></Field>
+            <Field label="Currency"><input name="currency" defaultValue={data.entity.currency} maxLength={3} /></Field>
+            <Field label="Invoice prefix" hint={`Next number: ${data.entity.invoice_prefix}${String(data.entity.next_invoice_seq).padStart(5, "0")}`}><input name="invoice_prefix" defaultValue={data.entity.invoice_prefix} /></Field>
+            <Field label="Tax label"><input name="tax_label" defaultValue={data.entity.tax_label} /></Field>
+            <Field label="Tax rate %" hint="SA VAT preset. Confirm the current rate with your accountant."><input name="tax_rate" defaultValue={Math.round(data.entity.tax_rate * 10000) / 100} /></Field>
+            <Field label="VAT number"><input name="tax_number" defaultValue={data.entity.tax_number} /></Field>
+            <Field label="Company registration number"><input name="registration_number" defaultValue={data.entity.registration_number} /></Field>
+            <Field label="Address" className="sm:col-span-2"><textarea name="address" defaultValue={data.entity.address} /></Field>
+            <Field label="Bank details (printed on invoices)" className="sm:col-span-2"><textarea name="bank_details" defaultValue={data.entity.bank_details} /></Field>
+            <div><SubmitButton className={buttonClass("primary", "sm")}>Save</SubmitButton></div>
+          </form>
+        </Card>
+      )}
+
+      {tab === "rates" && (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+          <Card pad={false}>
+            <Table head={["Role", "Client override", "Rate / hour", "Effective from"]}>
+              {data.rates.map((r) => <tr key={r.id}><Td>{r.role_title}</Td><Td className="text-ink-2">{r.company ?? "All clients"}</Td><Td right><Money cents={r.rate_cents} /></Td><Td className="text-ink-2">{formatDate(r.effective_from)}</Td></tr>)}
+            </Table>
+          </Card>
+          {costs && (
+            <Card title="Add or change a rate">
+              <form action={addRateAction} className="space-y-2">
+                <Field label="Role"><input name="role_title" list="roles" required /><datalist id="roles">{roleTitles.map((r) => <option key={r} value={r} />)}</datalist></Field>
+                <Field label="Client (optional override)"><select name="company_id" defaultValue=""><option value="">All clients</option>{data.companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+                <Field label="Rate per hour (excl. VAT)"><input name="rate" required /></Field>
+                <Field label="Effective from"><input type="date" name="effective_from" /></Field>
+                <SubmitButton className={buttonClass("primary", "sm")}>Add rate</SubmitButton>
+                <p className="text-xs text-ink-3">Rates never change history: each time entry keeps the rate in force on its date.</p>
+              </form>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {tab === "team" && (
+        <div className="space-y-4">
+          <Card pad={false} className="max-w-4xl">
+            <ul className="divide-y divide-line">
+              {data.users.map((u) => (
+                <li key={u.id} className={u.active ? "" : "opacity-60"}>
+                  <Dialog
+                    title={u.name}
+                    subtitle={u.email}
+                    triggerLabel={`Edit ${u.name}`}
+                    triggerClassName="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2 first:rounded-t-xl last:rounded-b-xl"
+                    trigger={
+                      <>
+                        <Avatar name={u.name} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{u.name}</span>
+                          <span className="block truncate text-sm text-ink-3">{u.email}</span>
+                        </span>
+                        {u.active ? <Badge tone={u.role === "owner" ? "brand" : "neutral"}>{ROLE_LABELS[u.role as keyof typeof ROLE_LABELS] ?? u.role}</Badge> : <Badge>Deactivated</Badge>}
+                        <CaretRight aria-hidden size={16} className="shrink-0 text-ink-3" />
+                      </>
+                    }
+                  >
+                    {u.active ? (
+                      <div className="space-y-6">
+                        <form action={updateUserAction} className="grid gap-4 sm:grid-cols-2">
+                          <input type="hidden" name="user_id" value={u.id} />
+                          {!costs && <input type="hidden" name="cost_rate" value={(u.cost_rate_cents / 100).toFixed(2)} />}
+                          <Field label="Permission role"><select name="role" defaultValue={u.role}>{Object.entries(ROLE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+                          <Field label="Team" hint="Design and web people can be booked by anyone."><select name="team" defaultValue={u.team ?? ""}><option value="">No team</option>{TEAMS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Field>
+                          <Field label="Title" hint="Sets their billing rate." className="sm:col-span-2"><input name="title" defaultValue={u.title} list="roles2" /></Field>
+                          <Field label="Hours per week"><input name="weekly_hours" inputMode="decimal" defaultValue={u.weekly_hours} /></Field>
+                          <Field label="Target billable %"><input name="target_utilisation" inputMode="numeric" defaultValue={Math.round(u.target_utilisation * 100)} /></Field>
+                          {costs && <Field label="Cost per hour (R)" hint="What they cost you, never shown to clients."><input name="cost_rate" inputMode="decimal" defaultValue={(u.cost_rate_cents / 100).toFixed(2)} /></Field>}
+                          <div className="flex justify-end gap-2 sm:col-span-2"><SubmitButton className={buttonClass("primary")}>Save changes</SubmitButton></div>
+                        </form>
+                        {u.id !== user.id && (
+                          <form action={deactivateUserAction} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-critical/25 bg-critical/5 px-4 py-3">
+                            <input type="hidden" name="user_id" value={u.id} />
+                            <p className="min-w-0 flex-1 text-sm text-ink-2">Removing access ends their sessions and timers today.</p>
+                            <SubmitButton confirm={`Remove ${u.name}'s access? Their sessions and timers end today.`} className={buttonClass("danger")}>Remove access</SubmitButton>
+                          </form>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-ink-2">{u.name} no longer has access. Their time and history stay on record.</p>
+                    )}
+                  </Dialog>
+                </li>
+              ))}
+            </ul>
+            <datalist id="roles2">{roleTitles.map((r) => <option key={r} value={r} />)}</datalist>
+          </Card>
+          {invites.length > 0 && (
+            <Card title="Waiting to join" pad={false} className="max-w-3xl">
+              <ul className="divide-y divide-line">
+                {invites.map((i) => (
+                  <li key={i.token_hash} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                    <span><b className="font-medium">{i.name}</b> <span className="text-ink-3">{i.email} · expires {formatDate(i.expires_at.toISOString().slice(0, 10))}</span></span>
+                    <form action={revokeInviteAction}><input type="hidden" name="token_hash" value={i.token_hash} /><SubmitButton className={buttonClass("ghost", "sm")}>Cancel</SubmitButton></form>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+          <Card title="Invite a team member" className="max-w-3xl">
+            <form action={addUserAction} className="grid gap-3 sm:grid-cols-3">
+              <Field label="Name"><input name="name" required /></Field>
+              <Field label="Email"><input type="email" name="email" required /></Field>
+              <Field label="Permission role"><select name="role" defaultValue="staff">{Object.entries(ROLE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+              <Field label="Title (sets their rate)"><input name="title" list="roles2" defaultValue="Designer" /></Field>
+              <Field label="Team" hint="Design and web people can be booked by anyone."><select name="team" defaultValue="design"><option value="">No team</option>{TEAMS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Field>
+              <Field label="Hours per week"><input name="weekly_hours" defaultValue="40" /></Field>
+              <Field label="Target utilisation %"><input name="target_utilisation" defaultValue="70" /></Field>
+              {costs && <Field label="Cost per hour"><input name="cost_rate" /></Field>}
+              <div className="flex items-end"><SubmitButton className={buttonClass("primary", "sm")}>Send invitation</SubmitButton></div>
+            </form>
+            <p className="mt-2 text-xs text-ink-3">They get an email with a link to set their own password. Removing access ends sessions and timers the same day (Rule 14).</p>
+          </Card>
+        </div>
+      )}
+
+      {tab === "referrals" && referrals && (
+        <div className="max-w-3xl space-y-4">
+          <Card title="Share 8gency, earn free months">
+            <p className="text-sm text-ink-2">Send this link to another agency. When they join and are still using 8gency {QUALIFY_AFTER_DAYS} days later, you get a free month, up to six a year. It is taken off a future bill.</p>
+            <div className="mt-4"><CopyField value={referrals.link} label="Your referral link" /></div>
+            <dl className="mt-5 grid grid-cols-3 gap-4 border-t border-line pt-4 text-sm">
+              <div><dt className="text-ink-3">Waiting to join</dt><dd className="tnum text-2xl font-semibold">{referrals.rows.filter((r) => r.status === "waiting").length}</dd></div>
+              <div><dt className="text-ink-3">Signed up</dt><dd className="tnum text-2xl font-semibold">{referrals.rows.filter((r) => r.status === "signed_up").length}</dd></div>
+              <div><dt className="text-ink-3">Free months earned</dt><dd className="tnum text-2xl font-semibold">{referrals.earned}</dd></div>
+            </dl>
+          </Card>
+          {referrals.rows.length > 0 && (
+            <Card title="Agencies you brought" pad={false}>
+              <ul className="divide-y divide-line">
+                {referrals.rows.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
+                    <span className="font-medium">{r.referred_agency_name}</span>
+                    <span className="flex items-center gap-3 text-ink-3">
+                      {r.status === "signed_up" && r.signed_up_at && <span>Free month on {formatDate(new Date(r.signed_up_at.getTime() + QUALIFY_AFTER_DAYS * 86400_000).toISOString().slice(0, 10))}</span>}
+                      <Badge tone={r.status === "qualified" ? "good" : r.status === "signed_up" ? "info" : "neutral"}>{r.status === "qualified" ? "Free month earned" : r.status === "signed_up" ? "Signed up" : r.status === "void" ? "Over the yearly limit" : "On the waitlist"}</Badge>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {tab === "modules" && (
+        <Card title="What your agency uses" className="max-w-3xl">
+          <form action={updateModulesAction} className="space-y-5">
+            <ul className="divide-y divide-line rounded-lg border border-line">
+              {MODULES.map((m) => (
+                <li key={m.key}>
+                  <label className="flex cursor-pointer items-start gap-3 px-4 py-3">
+                    <input type="checkbox" name={m.key} defaultChecked={modulesOf(data.agency.modules)[m.key]} className="mt-1" />
+                    <span><span className="block text-sm font-medium">{m.label}</span><span className="block text-xs text-ink-3">{m.hint}</span></span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <fieldset>
+              <legend className="mb-2 text-[13px] font-medium text-ink-2">How strict is Book time?</legend>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {([["loose", "Loose", "Book someone on a job at a time. Quick, for teams that plan by feel."], ["strict", "Strict", "The booking must also fit the job's hours budget and one of its scope items."]] as const).map(([v, label, hint]) => (
+                  <label key={v} className="cursor-pointer rounded-lg border border-line p-3 text-sm has-[:checked]:border-brand has-[:checked]:bg-brand/5">
+                    <input type="radio" name="booking_mode" value={v} defaultChecked={modulesOf(data.agency.modules).booking_mode === v} className="sr-only" />
+                    <span className="block font-medium">{label}</span><span className="block text-xs text-ink-3">{hint}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <SubmitButton className={buttonClass("primary", "sm")}>Save</SubmitButton>
+            <p className="text-xs text-ink-3">Switching something off hides it from everyone. Nothing is deleted, and you can turn it back on any time.</p>
+          </form>
+        </Card>
+      )}
+
+      {tab === "import" && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card title="Import a CSV">
+            <form action={importAction} className="space-y-3">
+              <Field label="What's in the file?">
+                <select name="kind" defaultValue="time">
+                  <option value="clients">Clients</option>
+                  <option value="time">Time entries</option>
+                  <option value="tasks">Tasks</option>
+                </select>
+              </Field>
+              <dl className="space-y-1.5 rounded-lg bg-surface-2/60 px-3.5 py-3 text-xs text-ink-2">
+                <div><dt className="inline font-medium text-ink">Clients: </dt><dd className="inline">name, code, billing email, PO required, payment terms</dd></div>
+                <div><dt className="inline font-medium text-ink">Time entries (Harvest or Toggl export): </dt><dd className="inline">date, client, project, task, hours, email, billable, notes</dd></div>
+                <div><dt className="inline font-medium text-ink">Tasks (Asana, Monday, ClickUp or Trello): </dt><dd className="inline">name, project, client, assignee email, due date, status</dd></div>
+              </dl>
+              <Field label="CSV file"><input type="file" name="file" accept=".csv,text/csv" required /></Field>
+              <SubmitButton className={buttonClass("primary", "sm")}>Import</SubmitButton>
+            </form>
+          </Card>
+          <Card title="How mapping works">
+            <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
+              <li>Column names are matched case-insensitively (e.g. “Spent Date” or “Date”, “Hours” or “Duration”).</li>
+              <li>Missing clients and projects are created, so every hour lands on a job.</li>
+              <li>People are matched by email or name. Add your team first.</li>
+              <li>Imported time takes the rate card in force on each date.</li>
+              <li>Dates as YYYY-MM-DD or DD/MM/YYYY.</li>
+            </ul>
+            <p className="mt-3 text-xs text-ink-3">Toggl and Trello can be connected to pull your work in automatically (Connectors). For anything else, a CSV works today.</p>
+          </Card>
+        </div>
+      )}
+
+      {tab === "data" && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card title="Export your data">
+            <p className="text-sm text-ink-2">You own your data. Export everything in open formats at any time.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <a className={buttonClass("secondary", "sm")} href="/api/export/all">Everything (JSON)</a>
+              <a className={buttonClass("secondary", "sm")} href="/api/export/time">Time entries (CSV)</a>
+            </div>
+            <p className="mt-2 text-xs text-ink-3">Exports respect field permissions: cost rates are only included for finance roles. Every export is audit-logged.</p>
+          </Card>
+          <Card title="Security">
+            <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
+              <li>Tenant isolation is enforced by Postgres row-level security on every table.</li>
+              <li>Approvals and the audit log are immutable at the database level.</li>
+              <li>Client hub links are random, expire after 180 days and are revoked instantly.</li>
+              <li>SSO (Google, Microsoft) and 2FA are planned for this module; today staff sign in with email and password.</li>
+            </ul>
+          </Card>
+        </div>
+      )}
+    </>
+  );
+}
